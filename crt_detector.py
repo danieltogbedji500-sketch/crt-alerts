@@ -278,9 +278,7 @@ for symbol, display_name in MARKETS.items():
 
 
 save_state(state)
-
-if not first_run:
-    git_save_state()
+git_save_state()
 
 print()
 print("==============================================")
