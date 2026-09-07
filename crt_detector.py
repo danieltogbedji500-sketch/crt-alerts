@@ -1,8 +1,11 @@
 import os
+import json
+import subprocess
 import requests
 from datetime import datetime
 
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
+STATE_FILE = "crt_state.json"
 
 INTERVAL = "1d"
 
@@ -54,18 +57,38 @@ MARKETS = {
 }
 
 
-def send_discord(message):
-    response = requests.post(
-        DISCORD_WEBHOOK,
-        json={"content": message},
-        timeout=20
-    )
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        return {}
 
-    if response.status_code in (200, 204):
-        print("✅ Discord alert sent")
-    else:
-        print("❌ Discord error:", response.status_code)
-        print(response.text)
+    try:
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+def send_discord(message):
+    try:
+        response = requests.post(
+            DISCORD_WEBHOOK,
+            json={"content": message},
+            timeout=20
+        )
+
+        if response.status_code in (200, 204):
+            print("✅ Discord alert sent")
+        else:
+            print("❌ Discord error:", response.status_code)
+            print(response.text)
+
+    except Exception as e:
+        print("❌ Discord connection error:", e)
 
 
 def get_closed_candles(symbol):
@@ -97,7 +120,7 @@ def get_closed_candles(symbol):
     return closed
 
 
-def check_crt(symbol, display_name):
+def check_crt(symbol):
     candles = get_closed_candles(symbol)
 
     if candles is None:
@@ -130,6 +153,47 @@ def check_crt(symbol, display_name):
     return None
 
 
+def git_save_state():
+    try:
+        subprocess.run(
+            ["git", "config", "user.name", "CRT Bot"],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "config", "user.email", "crt-bot@users.noreply.github.com"],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "add", STATE_FILE],
+            check=True
+        )
+
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"]
+        )
+
+        if result.returncode == 0:
+            print("✓ No state changes to commit")
+            return
+
+        subprocess.run(
+            ["git", "commit", "-m", "Update CRT detector state"],
+            check=True
+        )
+
+        subprocess.run(
+            ["git", "push"],
+            check=True
+        )
+
+        print("✅ CRT state saved")
+
+    except Exception as e:
+        print("❌ Could not save state:", e)
+
+
 print()
 print("==============================================")
 print("       🚨 CRT GITHUB DETECTOR")
@@ -137,16 +201,50 @@ print("==============================================")
 print()
 print("Markets:", len(MARKETS))
 print("Timeframe: 1D")
-print("Checking all markets once...")
 print("Time:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 print()
+
+state = load_state()
+
+first_run = len(state) == 0
+
+if first_run:
+    print("🟡 FIRST RUN")
+    print("Creating baseline.")
+    print("Existing candles will NOT create alerts.")
+    print()
 
 alerts = 0
 
 for symbol, display_name in MARKETS.items():
 
     try:
-        signal = check_crt(symbol, display_name)
+        candles = get_closed_candles(symbol)
+
+        if candles is None:
+            print("⚠️", display_name, "— data unavailable")
+            continue
+
+        current = candles[0]
+        candle_time = current["openTime"]
+
+        previous_time = state.get(symbol)
+
+        if first_run:
+            state[symbol] = candle_time
+            print("✓ Baseline:", display_name)
+
+            continue
+
+        if previous_time == candle_time:
+            print("•", display_name, "— already processed")
+            continue
+
+        print("🆕", display_name, "— new daily candle")
+
+        signal = check_crt(symbol)
+
+        state[symbol] = candle_time
 
         if signal == "SELL":
 
@@ -156,7 +254,7 @@ for symbol, display_name in MARKETS.items():
                 "SELL"
             )
 
-            print("🚨", display_name, "→ SELL")
+            print("🚨 SELL:", display_name)
             send_discord(message)
             alerts += 1
 
@@ -168,7 +266,7 @@ for symbol, display_name in MARKETS.items():
                 "BUY"
             )
 
-            print("🚨", display_name, "→ BUY")
+            print("🚨 BUY:", display_name)
             send_discord(message)
             alerts += 1
 
@@ -179,8 +277,13 @@ for symbol, display_name in MARKETS.items():
         print("❌", display_name, "error:", e)
 
 
+save_state(state)
+
+if not first_run:
+    git_save_state()
+
 print()
 print("==============================================")
 print("Finished.")
-print("CRT alerts sent:", alerts)
+print("Alerts sent:", alerts)
 print("==============================================")
