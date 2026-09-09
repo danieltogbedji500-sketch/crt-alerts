@@ -2,60 +2,66 @@ import os
 import json
 import subprocess
 import requests
+from tradingview_sdk import TradingView, Interval
 from datetime import datetime
 
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 STATE_FILE = "crt_state.json"
 
-INTERVAL = "1d"
-
 MARKETS = {
-    "USDJPY": "USD/JPY",
-    "EURJPY": "EUR/JPY",
-    "GBPJPY": "GBP/JPY",
-    "AUDJPY": "AUD/JPY",
-    "CHFJPY": "CHF/JPY",
-    "NZDJPY": "NZD/JPY",
-    "CADJPY": "CAD/JPY",
+    "USDJPY": "OANDA:USDJPY",
+    "EURJPY": "OANDA:EURJPY",
+    "GBPJPY": "OANDA:GBPJPY",
+    "AUDJPY": "OANDA:AUDJPY",
+    "CHFJPY": "OANDA:CHFJPY",
+    "NZDJPY": "OANDA:NZDJPY",
+    "CADJPY": "OANDA:CADJPY",
 
-    "AUDUSD": "AUD/USD",
-    "EURAUD": "EUR/AUD",
-    "GBPAUD": "GBP/AUD",
-    "AUDCHF": "AUD/CHF",
-    "AUDNZD": "AUD/NZD",
-    "AUDCAD": "AUD/CAD",
+    "AUDUSD": "OANDA:AUDUSD",
+    "EURAUD": "OANDA:EURAUD",
+    "GBPAUD": "OANDA:GBPAUD",
+    "AUDCHF": "OANDA:AUDCHF",
+    "AUDNZD": "OANDA:AUDNZD",
+    "AUDCAD": "OANDA:AUDCAD",
 
-    "USDCHF": "USD/CHF",
-    "EURCHF": "EUR/CHF",
-    "GBPCHF": "GBP/CHF",
-    "NZDCHF": "NZD/CHF",
-    "CADCHF": "CAD/CHF",
+    "USDCHF": "OANDA:USDCHF",
+    "EURCHF": "OANDA:EURCHF",
+    "GBPCHF": "OANDA:GBPCHF",
+    "NZDCHF": "OANDA:NZDCHF",
+    "CADCHF": "OANDA:CADCHF",
 
-    "NZDUSD": "NZD/USD",
-    "EURNZD": "EUR/NZD",
-    "GBPNZD": "GBP/NZD",
-    "NZDCAD": "NZD/CAD",
+    "NZDUSD": "OANDA:NZDUSD",
+    "EURNZD": "OANDA:EURNZD",
+    "GBPNZD": "OANDA:GBPNZD",
+    "NZDCAD": "OANDA:NZDCAD",
 
-    "EURUSD": "EUR/USD",
-    "EURGBP": "EUR/GBP",
-    "EURCAD": "EUR/CAD",
+    "EURUSD": "OANDA:EURUSD",
+    "EURGBP": "OANDA:EURGBP",
+    "EURCAD": "OANDA:EURCAD",
 
-    "GBPUSD": "GBP/USD",
-    "GBPCAD": "GBP/CAD",
+    "GBPUSD": "OANDA:GBPUSD",
+    "GBPCAD": "OANDA:GBPCAD",
 
-    "USDCAD": "USD/CAD",
+    "USDCAD": "OANDA:USDCAD",
 
+    "XAUUSD": "OANDA:XAUUSD",
+    "XAGUSD": "OANDA:XAGUSD",
+
+    "US30": "OANDA:US30USD",
+    "USTEC": "OANDA:NAS100USD",
+    "US500": "OANDA:SPX500USD",
+
+    "BTCUSD": "OANDA:BTCUSD",
+    "ETHUSD": "OANDA:ETHUSD",
+}
+
+DISPLAY_NAMES = {
     "XAUUSD": "Gold",
     "XAGUSD": "Silver",
-
-    "US30": "US30",
     "USTEC": "US100",
-    "US500": "US500",
-
     "BTCUSD": "Bitcoin",
     "ETHUSD": "Ethereum",
 }
-
 
 def load_state():
     if not os.path.exists(STATE_FILE):
@@ -67,11 +73,9 @@ def load_state():
     except Exception:
         return {}
 
-
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
-
 
 def send_discord(message):
     try:
@@ -85,56 +89,32 @@ def send_discord(message):
             print("✅ Discord alert sent")
         else:
             print("❌ Discord error:", response.status_code)
-            print(response.text)
 
     except Exception as e:
         print("❌ Discord connection error:", e)
 
-
-def get_closed_candles(symbol):
-    url = f"https://biquote.io/api/{symbol}/ohlc"
-
-    response = requests.get(
-        url,
-        params={
-            "interval": INTERVAL,
-            "limit": 3
-        },
-        timeout=20
+def get_closed_candles(tv, symbol):
+    bars = tv.get_bars(
+        symbol,
+        Interval.DAY,
+        bars=3
     )
 
-    if response.status_code != 200:
-        print("❌ API error:", symbol, response.status_code)
+    if len(bars) < 2:
         return None
 
-    data = response.json()
+    return list(bars)[-2::-1][:2]
 
-    closed = [
-        bar for bar in data["bars"]
-        if not bar["isOpen"]
-    ]
-
-    if len(closed) < 2:
-        return None
-
-    return closed
-
-
-def check_crt(symbol):
-    candles = get_closed_candles(symbol)
-
-    if candles is None:
-        return None
-
+def check_crt(candles):
     current = candles[0]
     previous = candles[1]
 
-    previous_high = float(previous["high"])
-    previous_low = float(previous["low"])
+    previous_high = float(previous.high)
+    previous_low = float(previous.low)
 
-    current_high = float(current["high"])
-    current_low = float(current["low"])
-    current_close = float(current["close"])
+    current_high = float(current.high)
+    current_low = float(current.low)
+    current_close = float(current.close)
 
     swept_high = current_high > previous_high
     swept_low = current_low < previous_low
@@ -152,7 +132,6 @@ def check_crt(symbol):
 
     return None
 
-
 def git_save_state():
     try:
         subprocess.run(
@@ -161,7 +140,8 @@ def git_save_state():
         )
 
         subprocess.run(
-            ["git", "config", "user.email", "crt-bot@users.noreply.github.com"],
+            ["git", "config", "user.email",
+             "crt-bot@users.noreply.github.com"],
             check=True
         )
 
@@ -193,10 +173,9 @@ def git_save_state():
     except Exception as e:
         print("❌ Could not save state:", e)
 
-
 print()
 print("==============================================")
-print("       🚨 CRT GITHUB DETECTOR")
+print("       🚨 CRT OANDA DETECTOR")
 print("==============================================")
 print()
 print("Markets:", len(MARKETS))
@@ -205,7 +184,6 @@ print("Time:", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 print()
 
 state = load_state()
-
 first_run = len(state) == 0
 
 if first_run:
@@ -216,66 +194,67 @@ if first_run:
 
 alerts = 0
 
-for symbol, display_name in MARKETS.items():
+with TradingView() as tv:
 
-    try:
-        candles = get_closed_candles(symbol)
+    for symbol, tv_symbol in MARKETS.items():
 
-        if candles is None:
-            print("⚠️", display_name, "— data unavailable")
-            continue
+        display_name = DISPLAY_NAMES.get(symbol, symbol)
 
-        current = candles[0]
-        candle_time = current["openTime"]
+        try:
+            candles = get_closed_candles(tv, tv_symbol)
 
-        previous_time = state.get(symbol)
+            if candles is None:
+                print("⚠️", display_name, "— data unavailable")
+                continue
 
-        if first_run:
+            current = candles[0]
+
+            candle_time = str(current.time)
+
+            previous_time = state.get(symbol)
+
+            if first_run:
+                state[symbol] = candle_time
+                print("✓ Baseline:", display_name)
+                continue
+
+            if previous_time == candle_time:
+                print("•", display_name, "— already processed")
+                continue
+
+            print("🆕", display_name, "— new daily candle")
+
+            signal = check_crt(candles)
+
             state[symbol] = candle_time
-            print("✓ Baseline:", display_name)
 
-            continue
+            if signal == "SELL":
+                message = (
+                    "🚨 CRT DETECTED\n\n"
+                    f"Pair: {display_name}\n"
+                    "SELL"
+                )
 
-        if previous_time == candle_time:
-            print("•", display_name, "— already processed")
-            continue
+                print("🚨 SELL:", display_name)
+                send_discord(message)
+                alerts += 1
 
-        print("🆕", display_name, "— new daily candle")
+            elif signal == "BUY":
+                message = (
+                    "🚨 CRT DETECTED\n\n"
+                    f"Pair: {display_name}\n"
+                    "BUY"
+                )
 
-        signal = check_crt(symbol)
+                print("🚨 BUY:", display_name)
+                send_discord(message)
+                alerts += 1
 
-        state[symbol] = candle_time
+            else:
+                print("✓", display_name, "— no CRT")
 
-        if signal == "SELL":
-
-            message = (
-                "🚨 CRT DETECTED\n\n"
-                f"Pair: {display_name}\n"
-                "SELL"
-            )
-
-            print("🚨 SELL:", display_name)
-            send_discord(message)
-            alerts += 1
-
-        elif signal == "BUY":
-
-            message = (
-                "🚨 CRT DETECTED\n\n"
-                f"Pair: {display_name}\n"
-                "BUY"
-            )
-
-            print("🚨 BUY:", display_name)
-            send_discord(message)
-            alerts += 1
-
-        else:
-            print("✓", display_name, "— no CRT")
-
-    except Exception as e:
-        print("❌", display_name, "error:", e)
-
+        except Exception as e:
+            print("❌", display_name, "error:", e)
 
 save_state(state)
 git_save_state()
