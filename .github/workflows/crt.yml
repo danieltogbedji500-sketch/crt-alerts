@@ -3,6 +3,7 @@ name: CRT Alerts
 on:
   schedule:
     - cron: "0 */3 * * *"
+
   workflow_dispatch:
 
 permissions:
@@ -10,21 +11,25 @@ permissions:
 
 jobs:
   run-crt:
+
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.11"
 
-      - name: Install requests
-        run: pip install requests
+      - name: Install dependencies
+        run: |
+          pip install requests tradingview-sdk
 
       - name: Run CRT detector
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: python crt_detector.py
+        run: |
+          python crt_detector.py
