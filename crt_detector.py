@@ -3,7 +3,7 @@ import json
 import subprocess
 import requests
 from tradingview_sdk import TradingView, Interval
-from datetime import datetime
+from datetime import datetime, timezone
 
 DISCORD_WEBHOOK = os.environ["DISCORD_WEBHOOK"]
 STATE_FILE = "crt_state.json"
