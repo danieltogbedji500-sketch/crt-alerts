@@ -178,3 +178,92 @@ def git_save_state():
 
     except Exception as e:
         print("❌ Could not save state:", e)
+print()
+print("==============================================")
+print("       🚨 CRT OANDA DETECTOR")
+print("==============================================")
+print()
+print("Markets:", len(MARKETS))
+print("Timeframe: 1D")
+print(
+    "Time:",
+    datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+)
+print()
+
+state = load_state()
+first_run = len(state) == 0
+
+if first_run:
+    print("🟡 FIRST RUN")
+    print()
+    print("Creating baseline.")
+    print("Existing candles will NOT create alerts.")
+    print()
+
+alerts = 0
+
+with TradingView() as tv:
+    for symbol, tv_symbol in MARKETS.items():
+        display_name = DISPLAY_NAMES.get(symbol, symbol)
+
+        try:
+            candles = get_closed_candles(tv, tv_symbol)
+
+            if candles is None:
+                print("⚠️", display_name, "— data unavailable")
+                continue
+
+            current = candles[0]
+            candle_time = str(current.time)
+            previous_time = state.get(symbol)
+
+            if first_run:
+                state[symbol] = candle_time
+                print("✓ Baseline:", display_name, candle_time)
+                continue
+
+            if previous_time == candle_time:
+                print("•", display_name, "— already processed")
+                continue
+
+            print()
+            print("🆕", display_name, "— new daily candle")
+
+            signal = check_crt(candles)
+            state[symbol] = candle_time
+
+            if signal == "SELL":
+                message = (
+                    "🚨 CRT DETECTED\n\n"
+                    f"Pair: {display_name}\n"
+                    "SELL"
+                )
+                print("🚨 SELL:", display_name)
+                send_discord(message)
+                alerts += 1
+
+            elif signal == "BUY":
+                message = (
+                    "🚨 CRT DETECTED\n\n"
+                    f"Pair: {display_name}\n"
+                    "BUY"
+                )
+                print("🚨 BUY:", display_name)
+                send_discord(message)
+                alerts += 1
+
+            else:
+                print("✓", display_name, "— no CRT")
+
+        except Exception as e:
+            print("❌", display_name, "error:", e)
+
+save_state(state)
+git_save_state()
+
+print()
+print("==============================================")
+print("Finished.")
+print("Alerts sent:", alerts)
+print("==============================================")
