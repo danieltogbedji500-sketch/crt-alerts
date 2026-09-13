@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   run-crt-4h:
@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -32,3 +33,16 @@ jobs:
           DISCORD_WEBHOOK_4H: ${{ secrets.DISCORD_WEBHOOK_4H }}
         run: |
           python crt_detector_4h.py
+
+      - name: Save CRT state
+        run: |
+          git config user.name "github-actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add crt_state_4h.json
+
+          git diff --cached --quiet || git commit -m "Update 4H CRT state"
+
+          git pull --rebase origin main
+
+          git push
