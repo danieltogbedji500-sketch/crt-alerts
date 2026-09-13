@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from tradingview_sdk import TradingView
 
@@ -44,14 +45,46 @@ MARKETS = {
 
 
 # ============================================================
-# DISCORD WEBHOOK
-# IMPORTANT:
-# This is a SEPARATE webhook from the 1D detector.
-# GitHub Secret name:
+# SEPARATE 4H DISCORD WEBHOOK
+# GitHub Secret:
 # DISCORD_WEBHOOK_4H
 # ============================================================
 
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_4H")
+
+
+# ============================================================
+# STATE FILE
+# Remembers which 4H candle was already alerted
+# ============================================================
+
+STATE_FILE = "crt_state_4h.json"
+
+
+def load_state():
+
+    if not os.path.exists(STATE_FILE):
+        return {}
+
+    try:
+
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+
+    except Exception:
+
+        return {}
+
+
+def save_state(state):
+
+    with open(STATE_FILE, "w") as f:
+
+        json.dump(
+            state,
+            f,
+            indent=2
+        )
 
 
 # ============================================================
@@ -61,8 +94,9 @@ DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK_4H")
 def send_discord(message):
 
     if not DISCORD_WEBHOOK:
+
         print("❌ DISCORD_WEBHOOK_4H is missing")
-        return
+        return False
 
     try:
 
@@ -77,6 +111,7 @@ def send_discord(message):
         if response.status_code in (200, 204):
 
             print("✅ Discord alert sent")
+            return True
 
         else:
 
@@ -86,9 +121,15 @@ def send_discord(message):
                 f"{response.text}"
             )
 
+            return False
+
     except Exception as e:
 
-        print(f"❌ Discord connection error: {e}")
+        print(
+            f"❌ Discord connection error: {e}"
+        )
+
+        return False
 
 
 # ============================================================
@@ -105,14 +146,14 @@ def check_crt(current, previous):
     current_close = float(current.close)
 
     # --------------------------------------------------------
-    # Check liquidity sweep
+    # Liquidity sweeps
     # --------------------------------------------------------
 
     swept_high = current_high > previous_high
     swept_low = current_low < previous_low
 
     # --------------------------------------------------------
-    # Candle must close INSIDE previous candle range
+    # Current candle must close inside previous candle range
     # --------------------------------------------------------
 
     closed_inside = (
@@ -121,7 +162,7 @@ def check_crt(current, previous):
     )
 
     # --------------------------------------------------------
-    # HIGH SWEEP + CLOSE INSIDE = SELL CRT
+    # HIGH SWEEP + CLOSE INSIDE = SELL
     # --------------------------------------------------------
 
     if swept_high and closed_inside:
@@ -129,7 +170,7 @@ def check_crt(current, previous):
         return "SELL"
 
     # --------------------------------------------------------
-    # LOW SWEEP + CLOSE INSIDE = BUY CRT
+    # LOW SWEEP + CLOSE INSIDE = BUY
     # --------------------------------------------------------
 
     if swept_low and closed_inside:
@@ -155,11 +196,13 @@ def main():
     print("Feed: TradingView OANDA")
     print()
 
-    signals = []
+    # --------------------------------------------------------
+    # Load previous alerts
+    # --------------------------------------------------------
 
-    # --------------------------------------------------------
-    # Connect to TradingView
-    # --------------------------------------------------------
+    state = load_state()
+
+    signals = []
 
     with TradingView() as tv:
 
@@ -188,20 +231,19 @@ def main():
 
                     continue
 
-                # TradingView returns newest first.
-                # The last two bars are the latest candles.
-
+                # TradingView returns newest first
                 current = bars[-1]
                 previous = bars[-2]
 
-                signal = check_crt(
-                    current,
-                    previous
-                )
+                # ------------------------------------------------
+                # Candle identification
+                # ------------------------------------------------
+
+                candle_time = str(current.datetime)
 
                 print(
                     f"Current 4H: "
-                    f"{current.datetime}"
+                    f"{candle_time}"
                 )
 
                 print(
@@ -217,26 +259,49 @@ def main():
                 )
 
                 # ------------------------------------------------
-                # CRT FOUND
+                # Check CRT
                 # ------------------------------------------------
 
-                if signal:
+                signal = check_crt(
+                    current,
+                    previous
+                )
 
-                    print()
-                    print(
-                        f"🚨 CRT DETECTED: "
-                        f"{signal}"
-                    )
-
-                    signals.append({
-                        "pair": name,
-                        "signal": signal,
-                        "time": str(current.datetime)
-                    })
-
-                else:
+                if not signal:
 
                     print("✓ No CRT")
+                    continue
+
+                # ------------------------------------------------
+                # CHECK IF THIS CANDLE WAS ALREADY ALERTED
+                # ------------------------------------------------
+
+                last_alerted_candle = state.get(name)
+
+                if last_alerted_candle == candle_time:
+
+                    print(
+                        "⚠️ CRT already alerted "
+                        "for this 4H candle"
+                    )
+
+                    continue
+
+                # ------------------------------------------------
+                # NEW CRT
+                # ------------------------------------------------
+
+                print()
+                print(
+                    f"🚨 NEW CRT DETECTED: "
+                    f"{signal}"
+                )
+
+                signals.append({
+                    "pair": name,
+                    "signal": signal,
+                    "time": candle_time
+                })
 
             except Exception as e:
 
@@ -246,7 +311,7 @@ def main():
                 )
 
     # ========================================================
-    # FINAL RESULTS
+    # SEND NEW SIGNALS
     # ========================================================
 
     print()
@@ -258,15 +323,11 @@ def main():
     if signals:
 
         print(
-            f"🚨 CRT SIGNALS FOUND: "
+            f"🚨 NEW CRT SIGNALS: "
             f"{len(signals)}"
         )
 
         print()
-
-        # ----------------------------------------------------
-        # Send every signal to Discord
-        # ----------------------------------------------------
 
         for signal in signals:
 
@@ -288,13 +349,28 @@ def main():
                 f"{candle_time}"
             )
 
-            send_discord(message)
+            # ------------------------------------------------
+            # Only save the candle as alerted AFTER
+            # Discord successfully receives the alert
+            # ------------------------------------------------
+
+            sent = send_discord(message)
+
+            if sent:
+
+                state[pair] = candle_time
+
+                save_state(state)
+
+                print(
+                    f"💾 Saved state: "
+                    f"{pair} → {candle_time}"
+                )
 
     else:
 
         print(
-            "No CRT detected on "
-            "the latest 4H candles."
+            "No new CRT signals."
         )
 
     print()
@@ -304,7 +380,7 @@ def main():
 
 
 # ============================================================
-# RUN DETECTOR
+# RUN
 # ============================================================
 
 if __name__ == "__main__":
