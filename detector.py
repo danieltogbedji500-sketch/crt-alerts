@@ -139,7 +139,7 @@ def deduplicate_posts(posts):
 # Apify collector
 # ------------------------------------------------------------
 
-def collect_from_apify():
+def collect_from_apify(): from apify_collectors import collect_everything return collect_everything( SEARCH_QUERIES, PLATFORMS, )
     """
     Collection layer.
 
