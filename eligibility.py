@@ -1,11 +1,19 @@
-# eligibility.py
+```python
+# ============================================================
+# PROP-FIRM GIVEAWAY DETECTOR
+# ELIGIBILITY / RULES ENGINE
+# ============================================================
 
 import re
 from dataclasses import dataclass
 from enum import Enum
 
 
-class Decision(str, Enum):
+# ------------------------------------------------------------
+# DECISIONS
+# ------------------------------------------------------------
+
+class Decision(Enum):
     ELIGIBLE = "ELIGIBLE"
     REJECT = "REJECT"
     UNCERTAIN = "UNCERTAIN"
@@ -15,194 +23,408 @@ class Decision(str, Enum):
 class GiveawayResult:
     decision: Decision
     reason: str
-    confidence: float
+    entry_method: str = ""
 
 
-# Words that indicate a giveaway/contest
+# ------------------------------------------------------------
+# PROP-FIRM / GIVEAWAY TERMS
+# ------------------------------------------------------------
+
 GIVEAWAY_TERMS = [
     "giveaway",
-    "give away",
     "contest",
     "competition",
-    "win",
-    "winner",
-    "winners",
-    "free account",
+    "free funded",
+    "win a funded",
+    "win funded",
     "free challenge",
+    "free prop challenge",
 ]
 
-
-# Words indicating a prop/funded trading prize
 PROP_TERMS = [
     "prop firm",
     "propfirm",
     "prop trading",
     "proprietary trading",
     "funded account",
-    "funded challenge",
-    "funding challenge",
-    "trading challenge",
     "funded trader",
+    "funded challenge",
+    "trading challenge",
+    "funded account challenge",
+    "evaluation account",
+    "trader funding",
 ]
 
 
-# Engagement actions that are NOT allowed when mandatory
+# ------------------------------------------------------------
+# ENGAGEMENT ACTIONS
+# ------------------------------------------------------------
+
 ENGAGEMENT_ACTIONS = [
     "like",
     "likes",
-    "liking",
+    "liked",
     "share",
     "shares",
-    "sharing",
+    "shared",
     "repost",
     "repost this",
     "retweet",
-    "retweet this",
     "follow",
     "follow us",
     "follow me",
     "tag",
     "tag friends",
-    "tag 3 friends",
-    "tag 5 friends",
+    "tag a friend",
     "comment",
     "comment below",
+    "subscribe",
 ]
 
 
-# Phrases that strongly indicate the action is mandatory
+# ------------------------------------------------------------
+# PHRASES THAT STRONGLY INDICATE REQUIREMENT
+# ------------------------------------------------------------
+
 MANDATORY_PATTERNS = [
-    r"\bmust\s+(like|share|repost|retweet|follow|tag|comment)\b",
-    r"\bto\s+enter\b.*\b(like|share|repost|retweet|follow|tag|comment)\b",
-    r"\bto\s+win\b.*\b(like|share|repost|retweet|follow|tag|comment)\b",
-    r"\bentry\s+requirement\b.*\b(like|share|repost|retweet|follow|tag|comment)\b",
-    r"\brequired\b.*\b(like|share|repost|retweet|follow|tag|comment)\b",
-    r"\b(like|share|repost|retweet|follow|tag|comment)\b.*\bto enter\b",
-    r"\b(like|share|repost|retweet|follow|tag|comment)\b.*\bto win\b",
-    r"\b(like|share|repost|retweet|follow|tag|comment)\b.*\bmandatory\b",
-    r"\b(like|share|repost|retweet|follow|tag|comment)\b.*\brequired\b",
+    # Like
+    r"\blike\b.{0,100}\bto enter\b",
+    r"\blike\b.{0,100}\bto win\b",
+    r"\blike\b.{0,100}\bfor a chance\b",
+
+    # Share / repost
+    r"\bshare\b.{0,100}\bto enter\b",
+    r"\bshare\b.{0,100}\bto win\b",
+    r"\brepost\b.{0,100}\bto enter\b",
+    r"\brepost\b.{0,100}\bto win\b",
+    r"\bretweet\b.{0,100}\bto enter\b",
+    r"\bretweet\b.{0,100}\bto win\b",
+
+    # Follow
+    r"\bfollow\b.{0,100}\bto enter\b",
+    r"\bfollow\b.{0,100}\bto win\b",
+    r"\bfollow us\b.{0,100}\bto enter\b",
+    r"\bfollow us\b.{0,100}\bto win\b",
+
+    # Tag
+    r"\btag\b.{0,100}\bto enter\b",
+    r"\btag\b.{0,100}\bto win\b",
+    r"\btag friends\b.{0,100}\bto enter\b",
+    r"\btag a friend\b.{0,100}\bto enter\b",
+
+    # Comment
+    r"\bcomment\b.{0,100}\bto enter\b",
+    r"\bcomment below\b.{0,100}\bto enter\b",
+    r"\bcomment\b.{0,100}\bto win\b",
+
+    # Subscribe
+    r"\bsubscribe\b.{0,100}\bto enter\b",
+    r"\bsubscribe\b.{0,100}\bto win\b",
+
+    # Direct requirement wording
+    r"\bmust\b.{0,100}\blike\b",
+    r"\bmust\b.{0,100}\bshare\b",
+    r"\bmust\b.{0,100}\brepost\b",
+    r"\bmust\b.{0,100}\bfollow\b",
+    r"\bmust\b.{0,100}\btag\b",
+    r"\bmust\b.{0,100}\bcomment\b",
+    r"\brequired\b.{0,100}\blike\b",
+    r"\brequired\b.{0,100}\bshare\b",
+    r"\brequired\b.{0,100}\brepost\b",
+    r"\brequired\b.{0,100}\bfollow\b",
+    r"\brequired\b.{0,100}\btag\b",
+    r"\brequired\b.{0,100}\bcomment\b",
+
+    # Entry instructions
+    r"\bto enter\b.{0,100}\blike\b",
+    r"\bto enter\b.{0,100}\bshare\b",
+    r"\bto enter\b.{0,100}\brepost\b",
+    r"\bto enter\b.{0,100}\bfollow\b",
+    r"\bto enter\b.{0,100}\btag\b",
+    r"\bto enter\b.{0,100}\bcomment\b",
+
+    r"\bentry\b.{0,100}\blike\b",
+    r"\bentry\b.{0,100}\bshare\b",
+    r"\bentry\b.{0,100}\brepost\b",
+    r"\bentry\b.{0,100}\bfollow\b",
+    r"\bentry\b.{0,100}\btag\b",
+    r"\bentry\b.{0,100}\bcomment\b",
+
+    # Winner selection
+    r"\bwinner\b.{0,100}\bselected\b.{0,100}\bcomment\b",
+    r"\bwinners?\b.{0,100}\bfrom\b.{0,100}\bcomments?\b",
 ]
 
 
-# Phrases showing that engagement is optional/supportive
+# ------------------------------------------------------------
+# CLEARLY OPTIONAL ENGAGEMENT
+# ------------------------------------------------------------
+
 OPTIONAL_PATTERNS = [
-    r"\bif you want\b",
     r"\boptional\b",
-    r"\bfeel free to\b",
-    r"\byou can\b",
-    r"\bif you wish\b",
     r"\bnot required\b",
     r"\bnot mandatory\b",
     r"\bno need to\b",
+    r"\byou don't have to\b",
+    r"\byou do not have to\b",
+    r"\bif you want to support us\b",
+    r"\bif you'd like to support us\b",
+    r"\bif you want to help\b",
+    r"\bfeel free to like\b",
+    r"\bfeel free to share\b",
+    r"\bfeel free to follow\b",
+    r"\bfeel free to repost\b",
 ]
 
 
-def normalize(text: str) -> str:
-    """Normalize post text for analysis."""
-    text = text.lower()
+# ------------------------------------------------------------
+# CLEAR NON-ENGAGEMENT ENTRY METHODS
+# ------------------------------------------------------------
+
+ENTRY_PATTERNS = [
+    r"\bregister\b",
+    r"\bregistration\b",
+    r"\bsign up\b",
+    r"\bsignup\b",
+    r"\bfill out\b",
+    r"\bform\b",
+    r"\bapplication\b",
+    r"\bjoin\b",
+    r"\bjoin our discord\b",
+    r"\bjoin the discord\b",
+    r"\bvisit\b",
+    r"\bwebsite\b",
+    r"\blink in bio\b",
+    r"\benter through\b",
+    r"\bentry form\b",
+]
+
+
+# ------------------------------------------------------------
+# TEXT NORMALIZATION
+# ------------------------------------------------------------
+
+def normalize(text):
+    if not text:
+        return ""
+
+    text = str(text).lower()
+
+    # Normalize common symbols.
+    text = text.replace("&", " and ")
+    text = text.replace("\n", " ")
+    text = text.replace("\r", " ")
+
+    # Collapse whitespace.
     text = re.sub(r"\s+", " ", text)
+
     return text.strip()
 
 
-def contains_any(text: str, terms: list[str]) -> bool:
+# ------------------------------------------------------------
+# TERM DETECTION
+# ------------------------------------------------------------
+
+def contains_any(text, terms):
     return any(term in text for term in terms)
 
 
-def is_prop_giveaway(text: str) -> bool:
+def is_prop_giveaway(text):
     """
-    Determine whether the post appears to be about
-    a prop-firm/funded-account giveaway.
-    """
-
-    giveaway_found = contains_any(text, GIVEAWAY_TERMS)
-    prop_found = contains_any(text, PROP_TERMS)
-
-    return giveaway_found and prop_found
-
-
-def mandatory_engagement_detected(text: str) -> bool:
-    """Detect explicit mandatory engagement requirements."""
-
-    for pattern in MANDATORY_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-
-    return False
-
-
-def optional_engagement_detected(text: str) -> bool:
-    """Detect language suggesting engagement is optional."""
-
-    for pattern in OPTIONAL_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return True
-
-    return False
-
-
-def analyze_entry_requirements(text: str) -> Decision:
-    """
-    Apply the user's strict entry rule.
-
-    Mandatory engagement = REJECT
-    Clearly optional engagement = continue
-    Ambiguous engagement requirement = UNCERTAIN
-    """
-
-    mandatory = mandatory_engagement_detected(text)
-
-    if mandatory:
-        return Decision.REJECT
-
-    # Look for engagement terms in the post.
-    engagement_present = contains_any(text, ENGAGEMENT_ACTIONS)
-
-    if not engagement_present:
-        return Decision.ELIGIBLE
-
-    # Engagement exists but is explicitly optional.
-    if optional_engagement_detected(text):
-        return Decision.ELIGIBLE
-
-    # Engagement is mentioned but we cannot prove whether
-    # it is mandatory or optional.
-    return Decision.UNCERTAIN
-
-
-def evaluate_giveaway(text: str) -> GiveawayResult:
-    """
-    Main eligibility engine.
+    Determines whether the content is sufficiently related
+    to a prop-firm / funded-account giveaway.
     """
 
     text = normalize(text)
 
-    # First determine whether this is even a prop giveaway.
-    if not is_prop_giveaway(text):
+    has_giveaway = contains_any(text, GIVEAWAY_TERMS)
+    has_prop = contains_any(text, PROP_TERMS)
+
+    return has_giveaway and has_prop
+
+
+# ------------------------------------------------------------
+# MANDATORY ENGAGEMENT DETECTION
+# ------------------------------------------------------------
+
+def mandatory_engagement_detected(text):
+    text = normalize(text)
+
+    for pattern in MANDATORY_PATTERNS:
+        if re.search(pattern, text):
+            return True
+
+    return False
+
+
+# ------------------------------------------------------------
+# OPTIONAL ENGAGEMENT DETECTION
+# ------------------------------------------------------------
+
+def optional_engagement_detected(text):
+    text = normalize(text)
+
+    for pattern in OPTIONAL_PATTERNS:
+        if re.search(pattern, text):
+            return True
+
+    return False
+
+
+# ------------------------------------------------------------
+# ENTRY METHOD EXTRACTION
+# ------------------------------------------------------------
+
+def extract_entry_method(text):
+    text = normalize(text)
+
+    matches = []
+
+    for pattern in ENTRY_PATTERNS:
+        match = re.search(pattern, text)
+
+        if match:
+            matches.append(match.group(0))
+
+    if not matches:
+        return ""
+
+    # Remove duplicates while preserving order.
+    unique = list(dict.fromkeys(matches))
+
+    return ", ".join(unique)
+
+
+# ------------------------------------------------------------
+# ENGAGEMENT MENTION
+# ------------------------------------------------------------
+
+def engagement_mentioned(text):
+    text = normalize(text)
+
+    return contains_any(text, ENGAGEMENT_ACTIONS)
+
+
+# ------------------------------------------------------------
+# MAIN ANALYSIS
+# ------------------------------------------------------------
+
+def analyze_entry_requirements(text):
+    text = normalize(text)
+
+    if not text:
         return GiveawayResult(
-            decision=Decision.REJECT,
-            reason="Not clearly a prop-firm giveaway",
-            confidence=0.95,
+            Decision.UNCERTAIN,
+            "No usable post text.",
         )
 
-    # Apply the entry requirement rule.
-    entry_decision = analyze_entry_requirements(text)
+    # --------------------------------------------------------
+    # 1. Explicit mandatory engagement = REJECT
+    # --------------------------------------------------------
 
-    if entry_decision == Decision.REJECT:
+    if mandatory_engagement_detected(text):
         return GiveawayResult(
-            decision=Decision.REJECT,
-            reason="Mandatory engagement requirement detected",
-            confidence=0.98,
+            Decision.REJECT,
+            "Mandatory social-media engagement is required.",
         )
 
-    if entry_decision == Decision.UNCERTAIN:
+    # --------------------------------------------------------
+    # 2. Explicitly optional engagement = acceptable
+    # --------------------------------------------------------
+
+    if optional_engagement_detected(text):
+        entry = extract_entry_method(text)
+
         return GiveawayResult(
-            decision=Decision.UNCERTAIN,
-            reason="Engagement requirement is ambiguous",
-            confidence=0.50,
+            Decision.ELIGIBLE,
+            "Social-media engagement is explicitly optional.",
+            entry,
         )
+
+    # --------------------------------------------------------
+    # 3. No engagement mentioned
+    # --------------------------------------------------------
+
+    if not engagement_mentioned(text):
+        entry = extract_entry_method(text)
+
+        return GiveawayResult(
+            Decision.ELIGIBLE,
+            "No mandatory social-media engagement detected.",
+            entry,
+        )
+
+    # --------------------------------------------------------
+    # 4. Engagement exists but relationship is unclear
+    # --------------------------------------------------------
 
     return GiveawayResult(
-        decision=Decision.ELIGIBLE,
-        reason="Prop-firm giveaway with no mandatory engagement requirement detected",
-        confidence=0.90,
-)
+        Decision.UNCERTAIN,
+        "Social-media engagement is mentioned, but it is unclear whether it is mandatory.",
+    )
+
+
+# ------------------------------------------------------------
+# FINAL GIVEAWAY EVALUATION
+# ------------------------------------------------------------
+
+def evaluate_giveaway(text):
+    text = normalize(text)
+
+    # Not a recognizable prop giveaway.
+    if not is_prop_giveaway(text):
+        return GiveawayResult(
+            Decision.REJECT,
+            "Content is not clearly a prop-firm giveaway.",
+        )
+
+    result = analyze_entry_requirements(text)
+
+    return result
+
+
+# ------------------------------------------------------------
+# LOCAL TESTS
+# ------------------------------------------------------------
+
+if __name__ == "__main__":
+
+    tests = [
+        (
+            "Like, repost and follow to enter our $100K funded "
+            "account giveaway."
+        ),
+
+        (
+            "Register through our website to enter the $100K "
+            "funded account giveaway."
+        ),
+
+        (
+            "Join our free funded account giveaway. "
+            "Following us is optional."
+        ),
+
+        (
+            "Like and repost if you want to support us. "
+            "Enter the $100K funded account giveaway through "
+            "the registration form."
+        ),
+
+        (
+            "Like this post and join our $100K funded account "
+            "giveaway."
+        ),
+    ]
+
+    print("\nPROP-FIRM GIVEAWAY RULE TESTS\n")
+
+    for number, test in enumerate(tests, start=1):
+        result = evaluate_giveaway(test)
+
+        print(f"TEST {number}")
+        print(f"Decision: {result.decision.value}")
+        print(f"Reason:   {result.reason}")
+        print(f"Entry:    {result.entry_method}")
+        print("-" * 60)
+```
