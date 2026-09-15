@@ -1,0 +1,21 @@
+name: Giveaway Rules Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-rules:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run eligibility tests
+        run: |
+          python eligibility.py
