@@ -1,4 +1,3 @@
-```python
 # ============================================================
 # PROP-FIRM GIVEAWAY DETECTOR
 # ELIGIBILITY / RULES ENGINE
