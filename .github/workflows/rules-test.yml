@@ -1,6 +1,10 @@
 name: Giveaway Rules Test
 
 on:
+  push:
+    branches:
+      - giveaway-detector
+
   workflow_dispatch:
 
 jobs:
