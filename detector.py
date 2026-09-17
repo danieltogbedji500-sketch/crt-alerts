@@ -1,127 +1,69 @@
 # ============================================================
 # PROP-FIRM GIVEAWAY DETECTOR
-# Main detection engine
+# Main detector engine
 # ============================================================
 
 import os
 import hashlib
 import requests
 
-from config import (
-    SEARCH_QUERIES,
-    SEND_UNCERTAIN,
-    DEDUPLICATE_RESULTS,
-    MAX_POSTS_PER_RUN,
-    DEBUG,
-)
+from config import SEARCH_QUERIES, PLATFORMS
+from eligibility import evaluate_giveaway
 
-from eligibility import (
-    Decision,
-    evaluate_giveaway,
-)
-
-
-# ------------------------------------------------------------
-# Environment variables
-# ------------------------------------------------------------
 
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 
 # ------------------------------------------------------------
-# Logging
+# Normalize collected posts
 # ------------------------------------------------------------
 
-def log(message):
-    if DEBUG:
-        print(message)
-
-
-# ------------------------------------------------------------
-# Normalize a collected post
-# ------------------------------------------------------------
-
-def normalize_post(item):
-    """
-    Convert different platform/Apify formats into one
-    common structure.
-    """
-
-    text_parts = [
-        item.get("text"),
-        item.get("caption"),
-        item.get("description"),
-        item.get("title"),
-        item.get("content"),
-    ]
-
-    text = " ".join(
-        str(x).strip()
-        for x in text_parts
-        if x
-    )
-
+def normalize_post(post):
     return {
-        "id": item.get("id"),
-        "platform": item.get("platform", "unknown"),
-        "post_url": (
-            item.get("post_url")
-            or item.get("url")
-            or item.get("webUrl")
-            or item.get("link")
-        ),
-        "author": (
-            item.get("author")
-            or item.get("authorName")
-            or item.get("username")
-            or ""
-        ),
-        "published_at": (
-            item.get("published_at")
-            or item.get("timestamp")
-            or item.get("date")
-        ),
-        "text": text,
-        "title": item.get("title", ""),
-        "description": item.get("description", ""),
-        "media": item.get("media"),
-        "transcript": item.get("transcript"),
-        "engagement_data": item.get("engagement_data"),
+        "platform": post.get("platform", "unknown"),
+        "post_url": post.get("post_url") or post.get("url") or "",
+        "author": post.get("author") or post.get("username") or "",
+        "published_at": post.get("published_at") or post.get("timestamp") or "",
+        "text": post.get("text") or "",
+        "title": post.get("title") or "",
+        "description": post.get("description") or "",
+        "media": post.get("media") or "",
+        "transcript": post.get("transcript") or "",
+        "engagement_data": post.get("engagement_data") or {},
     }
 
 
 # ------------------------------------------------------------
-# Deduplication
+# Create a fingerprint for deduplication
 # ------------------------------------------------------------
 
 def make_fingerprint(post):
-    """
-    Creates a stable fingerprint so the same giveaway isn't
-    sent repeatedly.
-    """
-
-    url = (post.get("post_url") or "").strip().lower()
+    url = post.get("post_url", "").strip().lower()
 
     if url:
-        return hashlib.sha256(
-            url.encode("utf-8")
-        ).hexdigest()
+        source = url
+    else:
+        source = (
+            post.get("platform", "")
+            + "|"
+            + post.get("author", "")
+            + "|"
+            + post.get("text", "")
+            + "|"
+            + post.get("title", "")
+        )
 
-    content = (
-        post.get("text", "")
-        + "|"
-        + post.get("author", "")
-    ).strip().lower()
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
-    return hashlib.sha256(
-        content.encode("utf-8")
-    ).hexdigest()
 
+# ------------------------------------------------------------
+# Remove duplicate posts
+# ------------------------------------------------------------
 
 def deduplicate_posts(posts):
     seen = set()
-    unique = []
+    unique_posts = []
 
     for post in posts:
         fingerprint = make_fingerprint(post)
@@ -130,121 +72,191 @@ def deduplicate_posts(posts):
             continue
 
         seen.add(fingerprint)
-        unique.append(post)
+        unique_posts.append(post)
 
-    return unique
-
-
-# ------------------------------------------------------------
-# Apify collector
-# ------------------------------------------------------------
-
-def collect_from_apify(): from apify_collectors import collect_everything 
-    return collect_everything( SEARCH_QUERIES, PLATFORMS, )
-    """
-    Collection layer.
-
-    The actual Apify actor(s) will be configured here.
-
-    We intentionally keep this separate from the eligibility
-    engine so platform-specific scraping cannot change the
-    giveaway rules.
-    """
-
-    if not APIFY_API_TOKEN:
-        log("WARNING: APIFY_API_TOKEN is not configured.")
-        return []
-
-    log("Starting Apify collection...")
-
-    # Actor configuration will be added once the exact Apify
-    # actor(s) and input schema are selected.
-    #
-    # For now, return an empty list instead of pretending that
-    # collection has succeeded.
-
-    return []
+    return unique_posts
 
 
 # ------------------------------------------------------------
-# Eligibility processing
+# Collect posts through Apify
 # ------------------------------------------------------------
 
-def process_posts(posts):
-    results = []
+def collect_from_apify():
+    from apify_collectors import collect_everything
 
-    for raw_post in posts:
-
-        post = normalize_post(raw_post)
-
-        text = post.get("text", "").strip()
-
-        if not text:
-            continue
-
-        result = evaluate_giveaway(text)
-
-        result_data = {
-            "post": post,
-            "decision": result.decision,
-            "reason": result.reason,
-            "prize": getattr(result, "prize", None),
-            "firm": getattr(result, "firm", None),
-        }
-
-        results.append(result_data)
-
-        log(
-            f"[{result.decision.value}] "
-            f"{post.get('platform')} | "
-            f"{post.get('post_url')}"
-        )
-
-    return results
+    return collect_everything(
+        SEARCH_QUERIES,
+        PLATFORMS,
+    )
 
 
 # ------------------------------------------------------------
-# Discord notification
+# Build text used by the eligibility engine
 # ------------------------------------------------------------
 
-def send_discord_alert(result):
+def build_post_text(post):
+    parts = [
+        post.get("title", ""),
+        post.get("text", ""),
+        post.get("description", ""),
+        post.get("transcript", ""),
+    ]
+
+    return "\n".join(
+        part.strip()
+        for part in parts
+        if part and part.strip()
+    )
+
+
+# ------------------------------------------------------------
+# Send Discord alert
+# ------------------------------------------------------------
+
+def send_discord_alert(post, result):
     if not DISCORD_WEBHOOK_URL:
-        log("WARNING: DISCORD_WEBHOOK_URL is not configured.")
+        print("DISCORD_WEBHOOK_URL is not configured.")
         return False
 
-    post = result["post"]
+    entry_method = getattr(
+        result,
+        "entry_method",
+        None
+    ) or "Clearly eligible under detector rules."
+
+    prop_firm = getattr(
+        result,
+        "prop_firm",
+        None
+    ) or "Not clearly stated"
+
+    prize = getattr(
+        result,
+        "prize",
+        None
+    ) or "Not clearly stated"
+
+    winners = getattr(
+        result,
+        "winners",
+        None
+    ) or "Not stated"
 
     message = (
         "🎯 **ELIGIBLE PROP-FIRM GIVEAWAY**\n\n"
-        f"**Prop Firm:** "
-        f"{result.get('firm') or 'Not stated'}\n"
-        f"**Prize:** "
-        f"{result.get('prize') or 'Not stated'}\n"
-        f"**Platform:** "
-        f"{post.get('platform', 'Unknown')}\n"
-        f"**Author:** "
-        f"{post.get('author') or 'Unknown'}\n\n"
-        f"**Post:** {post.get('post_url')}\n\n"
-        f"**Entry:** Clearly eligible under detector rules."
+        f"**Prop Firm:** {prop_firm}\n"
+        f"**Prize:** {prize}\n"
+        f"**Winners:** {winners}\n"
+        f"**Platform:** {post.get('platform', 'Unknown')}\n"
+        f"**Author:** {post.get('author', 'Unknown')}\n\n"
+        f"**Post:** {post.get('post_url', '')}\n\n"
+        f"**Entry:** {entry_method}"
     )
 
-    response = requests.post(
-        DISCORD_WEBHOOK_URL,
-        json={"content": message},
-        timeout=20,
-    )
+    try:
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json={
+                "content": message
+            },
+            timeout=20,
+        )
 
-    if response.status_code in (200, 204):
-        log("Discord alert sent.")
-        return True
+        if response.status_code in (200, 204):
+            print(
+                f"Discord alert sent successfully: "
+                f"{post.get('post_url', '')}"
+            )
+            return True
 
-    log(
-        f"Discord error: "
-        f"{response.status_code} "
-        f"{response.text[:300]}"
-    )
+        print(
+            "Discord webhook failed: "
+            f"HTTP {response.status_code}"
+        )
+        print(response.text[:1000])
 
-    return False
+        return False
+
+    except Exception as error:
+        print(f"Discord webhook error: {error}")
+        return False
+
+
+# ------------------------------------------------------------
+# Process collected posts
+# ------------------------------------------------------------
+
+def process_posts(posts):
+    eligible_count = 0
+    uncertain_count = 0
+    rejected_count = 0
+    alerts_sent = 0
+
+    print(f"Processing {len(posts)} posts...")
+
+    for index, raw_post in enumerate(posts, start=1):
+
+        post = normalize_post(raw_post)
+        text = build_post_text(post)
+
+        if not text.strip():
+            rejected_count += 1
+            continue
+
+        try:
+            result = evaluate_giveaway(text)
+        except Exception as error:
+            print(
+                f"Eligibility error on post {index}: {error}"
+            )
+            continue
+
+        decision = getattr(result, "decision", None)
+
+        decision_value = getattr(
+            decision,
+            "value",
+            str(decision)
+        )
+
+        print(
+            f"Post {index}: "
+            f"{decision_value} | "
+            f"{post.get('platform', 'unknown')} | "
+            f"{post.get('post_url', '')}"
+        )
+
+        if decision_value == "ELIGIBLE":
+
+            eligible_count += 1
+
+            if send_discord_alert(post, result):
+                alerts_sent += 1
+
+        elif decision_value == "UNCERTAIN":
+
+            uncertain_count += 1
+
+        else:
+
+            rejected_count += 1
+
+    print("")
+    print("========== DETECTOR SUMMARY ==========")
+    print(f"Total posts:       {len(posts)}")
+    print(f"Eligible:          {eligible_count}")
+    print(f"Uncertain:         {uncertain_count}")
+    print(f"Rejected:          {rejected_count}")
+    print(f"Discord alerts:    {alerts_sent}")
+    print("=======================================")
+
+    return {
+        "total": len(posts),
+        "eligible": eligible_count,
+        "uncertain": uncertain_count,
+        "rejected": rejected_count,
+        "alerts_sent": alerts_sent,
+    }
 
 
 # ------------------------------------------------------------
@@ -253,71 +265,70 @@ def send_discord_alert(result):
 
 def main():
 
-    print("=" * 60)
+    print("==============================================")
     print("PROP-FIRM GIVEAWAY DETECTOR")
-    print("=" * 60)
+    print("==============================================")
 
-    log(f"Search queries loaded: {len(SEARCH_QUERIES)}")
-    log(f"Maximum posts per run: {MAX_POSTS_PER_RUN}")
+    if not APIFY_API_TOKEN:
+        print("ERROR: APIFY_API_TOKEN is not configured.")
+        return
 
-    # 1. Collect
-    raw_posts = collect_from_apify()
-
-    log(f"Collected posts: {len(raw_posts)}")
-
-    # 2. Normalize + deduplicate
-    posts = [
-        normalize_post(post)
-        for post in raw_posts
-    ]
-
-    if DEDUPLICATE_RESULTS:
-        posts = deduplicate_posts(posts)
-
-    log(f"Unique posts: {len(posts)}")
-
-    # 3. Evaluate
-    results = process_posts(posts)
-
-    eligible = [
-        r for r in results
-        if r["decision"] == Decision.ELIGIBLE
-    ]
-
-    uncertain = [
-        r for r in results
-        if r["decision"] == Decision.UNCERTAIN
-    ]
-
-    rejected = [
-        r for r in results
-        if r["decision"] == Decision.REJECT
-    ]
-
-    print()
-    print(f"Eligible:  {len(eligible)}")
-    print(f"Uncertain: {len(uncertain)}")
-    print(f"Rejected:  {len(rejected)}")
-
-    # 4. Discord
-    sent = 0
-
-    for result in eligible:
-
-        if send_discord_alert(result):
-            sent += 1
-
-    # SEND_UNCERTAIN remains False by default.
-    if SEND_UNCERTAIN:
-        log(
-            "WARNING: SEND_UNCERTAIN is enabled. "
-            "This is not recommended."
+    if not DISCORD_WEBHOOK_URL:
+        print(
+            "WARNING: DISCORD_WEBHOOK_URL is not configured."
         )
 
-    print()
-    print(f"Discord alerts sent: {sent}")
+    print("")
+    print("Platforms:")
+    print(PLATFORMS)
+
+    print("")
+    print(
+        f"Search queries: {len(SEARCH_QUERIES)}"
+    )
+
+    print("")
+    print("Starting Apify collection...")
+
+    try:
+        collected_posts = collect_from_apify()
+    except Exception as error:
+        print(
+            f"Apify collection failed: {error}"
+        )
+        return
+
+    if not collected_posts:
+        print("No posts were collected.")
+        return
+
+    print(
+        f"Collected {len(collected_posts)} raw posts."
+    )
+
+    normalized_posts = [
+        normalize_post(post)
+        for post in collected_posts
+    ]
+
+    unique_posts = deduplicate_posts(
+        normalized_posts
+    )
+
+    print(
+        f"After deduplication: "
+        f"{len(unique_posts)} posts."
+    )
+
+    process_posts(unique_posts)
+
+    print("")
     print("Detector run complete.")
 
+
+# ------------------------------------------------------------
+# Entry point
+# ------------------------------------------------------------
 
 if __name__ == "__main__":
     main()
