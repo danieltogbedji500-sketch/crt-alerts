@@ -54,31 +54,7 @@ SEARCH_QUERIES = [
 # internet/social content.
 
 PLATFORMS = [
-    "x",
-    "youtube",
-    "reddit",
-    "instagram",
-    "tiktok",
-    "facebook",
-    "linkedin",
-    "threads",
-    "telegram",
-    "snapchat",
-    "pinterest",
-    "twitch",
-    "discord",
-    "bluesky",
-    "mastodon",
-    "medium",
-    "substack",
-    "quora",
-    "vimeo",
-    "dailymotion",
-    "github",
-    "web",
-]
-
-
+    "web",]
 # ------------------------------------------------------------
 # Detector behavior
 # ------------------------------------------------------------
