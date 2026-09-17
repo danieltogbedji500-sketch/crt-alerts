@@ -1,11 +1,13 @@
-```yaml
 name: Prop-Firm Giveaway Detector
 
 on:
+  push:
+    branches:
+      - giveaway-detector
+
   workflow_dispatch:
 
   schedule:
-    # Every 3 hours
     - cron: "0 */3 * * *"
 
 jobs:
@@ -32,4 +34,3 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           python detector.py
-```
