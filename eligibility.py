@@ -426,4 +426,3 @@ if __name__ == "__main__":
         print(f"Reason:   {result.reason}")
         print(f"Entry:    {result.entry_method}")
         print("-" * 60)
-```
