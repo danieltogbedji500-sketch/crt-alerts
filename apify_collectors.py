@@ -83,6 +83,7 @@ def build_input(platform, queries):
 def first_value(item, keys, default=""):
 
     for key in keys:
+
         value = item.get(key)
 
         if value is not None and value != "":
@@ -94,6 +95,7 @@ def first_value(item, keys, default=""):
 def normalize_item(item, platform):
 
     if not isinstance(item, dict):
+
         return {
             "platform": platform,
             "post_url": "",
@@ -109,6 +111,7 @@ def normalize_item(item, platform):
 
     return {
         "platform": platform,
+
         "post_url": first_value(
             item,
             [
@@ -121,6 +124,7 @@ def normalize_item(item, platform):
                 "canonicalUrl",
             ],
         ),
+
         "author": first_value(
             item,
             [
@@ -132,6 +136,7 @@ def normalize_item(item, platform):
                 "channelName",
             ],
         ),
+
         "published_at": first_value(
             item,
             [
@@ -143,6 +148,7 @@ def normalize_item(item, platform):
                 "timestamp",
             ],
         ),
+
         "text": first_value(
             item,
             [
@@ -154,6 +160,7 @@ def normalize_item(item, platform):
                 "snippet",
             ],
         ),
+
         "title": first_value(
             item,
             [
@@ -162,13 +169,16 @@ def normalize_item(item, platform):
                 "name",
             ],
         ),
+
         "description": first_value(
             item,
             [
                 "description",
                 "desc",
+                "snippet",
             ],
         ),
+
         "media": first_value(
             item,
             [
@@ -177,6 +187,7 @@ def normalize_item(item, platform):
                 "mediaUrl",
             ],
         ),
+
         "transcript": first_value(
             item,
             [
@@ -184,6 +195,7 @@ def normalize_item(item, platform):
                 "transcription",
             ],
         ),
+
         "engagement_data": {},
     }
 
@@ -196,9 +208,11 @@ def run_actor(platform, queries):
         )
 
     if platform not in ACTORS:
+
         print(
             f"No Actor configured for platform: {platform}"
         )
+
         return []
 
     actor_id = ACTORS[platform]
@@ -225,9 +239,11 @@ def run_actor(platform, queries):
     dataset_id = run.default_dataset_id
 
     if not dataset_id:
+
         print(
             f"No dataset returned for {platform}."
         )
+
         return []
 
     items = []
@@ -236,15 +252,128 @@ def run_actor(platform, queries):
         dataset_id
     ).iterate_items():
 
-        items.append(
-            normalize_item(
+        # ----------------------------------------------------
+        # GOOGLE SEARCH SCRAPER
+        #
+        # The current Apify Google Search Scraper can return
+        # one search-page record containing:
+        #
+        # organicResults = [
+        #     {
+        #         title,
+        #         url,
+        #         description,
+        #         ...
+        #     }
+        # ]
+        #
+        # We must flatten those into individual posts.
+        # ----------------------------------------------------
+
+        if (
+            platform == "web"
+            and isinstance(
+                item.get("organicResults"),
+                list,
+            )
+        ):
+
+            organic_results = item.get(
+                "organicResults",
+                [],
+            )
+
+            query_info = item.get(
+                "searchQuery",
+                "",
+            )
+
+            if isinstance(
+                query_info,
+                dict,
+            ):
+
+                query_info = (
+                    query_info.get("term")
+                    or query_info.get("query")
+                    or ""
+                )
+
+            for result in organic_results:
+
+                if not isinstance(
+                    result,
+                    dict,
+                ):
+                    continue
+
+                result_url = first_value(
+                    result,
+                    [
+                        "url",
+                        "link",
+                        "resultUrl",
+                    ],
+                )
+
+                # Never treat Google's own search page
+                # as a giveaway post.
+                if (
+                    not result_url
+                    or "google.com/search" in result_url.lower()
+                    or "google.com/url" in result_url.lower()
+                ):
+                    continue
+
+                result_copy = dict(result)
+
+                if query_info:
+                    result_copy["search_query"] = query_info
+
+                normalized = normalize_item(
+                    result_copy,
+                    platform,
+                )
+
+                items.append(
+                    normalized
+                )
+
+        else:
+
+            # ------------------------------------------------
+            # Other actors may already return one post per
+            # dataset item.
+            # ------------------------------------------------
+
+            normalized = normalize_item(
                 item,
                 platform,
             )
-        )
+
+            result_url = normalized.get(
+                "post_url",
+                "",
+            )
+
+            if (
+                platform == "web"
+                and (
+                    not result_url
+                    or "google.com/search"
+                    in result_url.lower()
+                    or "google.com/url"
+                    in result_url.lower()
+                )
+            ):
+                continue
+
+            items.append(
+                normalized
+            )
 
     print(
-        f"{platform}: {len(items)} posts collected."
+        f"{platform}: {len(items)} individual results collected."
     )
 
     return items
@@ -273,7 +402,9 @@ def collect_everything(
                 search_queries,
             )
 
-            all_posts.extend(posts)
+            all_posts.extend(
+                posts
+            )
 
         except Exception as error:
 
@@ -283,8 +414,9 @@ def collect_everything(
 
     print("")
     print(
-        f"Total collected across platforms: "
+        f"Total individual results collected across platforms: "
         f"{len(all_posts)}"
     )
 
     return all_posts
+    
