@@ -3,6 +3,8 @@
 # APIFY COLLECTORS
 # ============================================================
 
+print("🚨 DETECTOR.PY STARTED")
+
 import os
 from apify_client import ApifyClient
 
