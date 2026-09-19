@@ -1,421 +1,498 @@
 # ============================================================
 # PROP-FIRM GIVEAWAY DETECTOR
-# APIFY COLLECTORS
+# Main detector engine
 # ============================================================
 
 import os
-from apify_client import ApifyClient
+import hashlib
+import requests
+
+from config import SEARCH_QUERIES, PLATFORMS
+from eligibility import evaluate_giveaway
 
 
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 
-ACTORS = {
-    "web": "apify/google-search-scraper",
-    "x": "apidojo/tweet-scraper",
-    "youtube": "apigeek/youtube-scraper",
-    "reddit": "scrapersdelight/reddit-search-scraper",
-    "instagram": "apify/instagram-search-scraper",
-    "facebook": "simpleapi/facebook-posts-search-scraper",
-    "tiktok": "logical_scrapers/tiktok-search-scraper",
-    "linkedin": "harvestapi/linkedin-post-search",
-}
-
-
-def build_input(platform, queries):
-
-    if platform == "web":
-        return {
-            "queries": "\n".join(queries),
-            "maxPagesPerQuery": 2,
-        }
-
-    if platform == "x":
-        return {
-            "searchTerms": queries,
-            "maxItems": 50,
-            "sort": "Latest",
-        }
-
-    if platform == "youtube":
-        return {
-            "searchQueries": queries,
-            "maxResultsPerQuery": 20,
-        }
-
-    if platform == "reddit":
-        return {
-            "searchQueries": queries,
-            "maxResultsPerQuery": 20,
-            "sort": "new",
-        }
-
-    if platform == "instagram":
-        return {
-            "search": " OR ".join(queries),
-            "searchType": "popular_reels",
-            "maxResults": 50,
-        }
-
-    if platform == "facebook":
-        return {
-            "searchQueries": queries,
-            "maxPosts": 50,
-            "postTimeRange": "7d",
-        }
-
-    if platform == "tiktok":
-        return {
-            "searchQueries": queries,
-            "maxItems": 50,
-        }
-
-    if platform == "linkedin":
-        return {
-            "searchQueries": queries,
-            "maxPosts": 50,
-            "postedLimit": "week",
-        }
-
-    return {}
-
-
-def first_value(item, keys, default=""):
-
-    for key in keys:
-
-        value = item.get(key)
-
-        if value is not None and value != "":
-            return value
-
-    return default
-
-
-def normalize_item(item, platform):
-
-    if not isinstance(item, dict):
-
-        return {
-            "platform": platform,
-            "post_url": "",
-            "author": "",
-            "published_at": "",
-            "text": str(item),
-            "title": "",
-            "description": "",
-            "media": "",
-            "transcript": "",
-            "engagement_data": {},
-        }
+def normalize_post(post):
 
     return {
-        "platform": platform,
-
-        "post_url": first_value(
-            item,
-            [
-                "url",
-                "postUrl",
-                "post_url",
-                "tweetUrl",
-                "webUrl",
-                "link",
-                "canonicalUrl",
-            ],
+        "platform": post.get("platform", "unknown"),
+        "post_url": post.get("post_url") or post.get("url") or "",
+        "author": post.get("author") or post.get("username") or "",
+        "published_at": (
+            post.get("published_at")
+            or post.get("timestamp")
+            or ""
         ),
-
-        "author": first_value(
-            item,
-            [
-                "author",
-                "authorName",
-                "username",
-                "userName",
-                "ownerUsername",
-                "channelName",
-            ],
+        "text": post.get("text") or "",
+        "title": post.get("title") or "",
+        "description": post.get("description") or "",
+        "media": post.get("media") or "",
+        "transcript": post.get("transcript") or "",
+        "engagement_data": (
+            post.get("engagement_data") or {}
         ),
-
-        "published_at": first_value(
-            item,
-            [
-                "publishedAt",
-                "published_at",
-                "createdAt",
-                "created_at",
-                "date",
-                "timestamp",
-            ],
-        ),
-
-        "text": first_value(
-            item,
-            [
-                "text",
-                "fullText",
-                "content",
-                "caption",
-                "tweetText",
-                "snippet",
-            ],
-        ),
-
-        "title": first_value(
-            item,
-            [
-                "title",
-                "videoTitle",
-                "name",
-            ],
-        ),
-
-        "description": first_value(
-            item,
-            [
-                "description",
-                "desc",
-                "snippet",
-            ],
-        ),
-
-        "media": first_value(
-            item,
-            [
-                "videoUrl",
-                "imageUrl",
-                "mediaUrl",
-            ],
-        ),
-
-        "transcript": first_value(
-            item,
-            [
-                "transcript",
-                "transcription",
-            ],
-        ),
-
-        "engagement_data": {},
     }
 
 
-def run_actor(platform, queries):
+def make_fingerprint(post):
 
-    if not APIFY_API_TOKEN:
-        raise RuntimeError(
-            "APIFY_API_TOKEN is not configured."
+    url = post.get(
+        "post_url",
+        "",
+    ).strip().lower()
+
+    if url:
+
+        source = url
+
+    else:
+
+        source = (
+            post.get("platform", "")
+            + "|"
+            + post.get("author", "")
+            + "|"
+            + post.get("text", "")
+            + "|"
+            + post.get("title", "")
         )
 
-    if platform not in ACTORS:
+    return hashlib.sha256(
+        source.encode("utf-8")
+    ).hexdigest()
 
-        print(
-            f"No Actor configured for platform: {platform}"
+
+def deduplicate_posts(posts):
+
+    seen = set()
+    unique_posts = []
+
+    for post in posts:
+
+        fingerprint = make_fingerprint(
+            post
         )
 
-        return []
+        if fingerprint in seen:
+            continue
 
-    actor_id = ACTORS[platform]
+        seen.add(fingerprint)
 
-    actor_input = build_input(
-        platform,
-        queries,
-    )
-
-    print(
-        f"Starting Apify Actor: {actor_id}"
-    )
-
-    client = ApifyClient(
-        APIFY_API_TOKEN
-    )
-
-    run = client.actor(
-        actor_id
-    ).call(
-        run_input=actor_input
-    )
-
-    dataset_id = run.default_dataset_id
-
-    if not dataset_id:
-
-        print(
-            f"No dataset returned for {platform}."
+        unique_posts.append(
+            post
         )
 
-        return []
+    return unique_posts
 
-    items = []
 
-    for item in client.dataset(
-        dataset_id
-    ).iterate_items():
+def collect_from_apify():
 
-        # ----------------------------------------------------
-        # GOOGLE SEARCH SCRAPER
-        #
-        # The current Apify Google Search Scraper can return
-        # one search-page record containing:
-        #
-        # organicResults = [
-        #     {
-        #         title,
-        #         url,
-        #         description,
-        #         ...
-        #     }
-        # ]
-        #
-        # We must flatten those into individual posts.
-        # ----------------------------------------------------
-
-        if (
-            platform == "web"
-            and isinstance(
-                item.get("organicResults"),
-                list,
-            )
-        ):
-
-            organic_results = item.get(
-                "organicResults",
-                [],
-            )
-
-            query_info = item.get(
-                "searchQuery",
-                "",
-            )
-
-            if isinstance(
-                query_info,
-                dict,
-            ):
-
-                query_info = (
-                    query_info.get("term")
-                    or query_info.get("query")
-                    or ""
-                )
-
-            for result in organic_results:
-
-                if not isinstance(
-                    result,
-                    dict,
-                ):
-                    continue
-
-                result_url = first_value(
-                    result,
-                    [
-                        "url",
-                        "link",
-                        "resultUrl",
-                    ],
-                )
-
-                # Never treat Google's own search page
-                # as a giveaway post.
-                if (
-                    not result_url
-                    or "google.com/search" in result_url.lower()
-                    or "google.com/url" in result_url.lower()
-                ):
-                    continue
-
-                result_copy = dict(result)
-
-                if query_info:
-                    result_copy["search_query"] = query_info
-
-                normalized = normalize_item(
-                    result_copy,
-                    platform,
-                )
-
-                items.append(
-                    normalized
-                )
-
-        else:
-
-            # ------------------------------------------------
-            # Other actors may already return one post per
-            # dataset item.
-            # ------------------------------------------------
-
-            normalized = normalize_item(
-                item,
-                platform,
-            )
-
-            result_url = normalized.get(
-                "post_url",
-                "",
-            )
-
-            if (
-                platform == "web"
-                and (
-                    not result_url
-                    or "google.com/search"
-                    in result_url.lower()
-                    or "google.com/url"
-                    in result_url.lower()
-                )
-            ):
-                continue
-
-            items.append(
-                normalized
-            )
-
-    print(
-        f"{platform}: {len(items)} individual results collected."
+    from apify_collectors import (
+        collect_everything
     )
 
-    return items
+    return collect_everything(
+        SEARCH_QUERIES,
+        PLATFORMS,
+    )
 
 
-def collect_everything(
-    search_queries,
-    platforms,
+def build_post_text(post):
+
+    parts = [
+        post.get("title", ""),
+        post.get("text", ""),
+        post.get("description", ""),
+        post.get("transcript", ""),
+    ]
+
+    return "\n".join(
+        part.strip()
+        for part in parts
+        if part and part.strip()
+    )
+
+
+def send_discord_alert(
+    post,
+    result,
 ):
 
-    all_posts = []
+    if not DISCORD_WEBHOOK_URL:
 
-    for platform in platforms:
-
-        print("")
-        print("--------------------------------------------")
         print(
-            f"Collecting platform: {platform}"
+            "DISCORD_WEBHOOK_URL is not configured."
         )
-        print("--------------------------------------------")
+
+        return False
+
+    entry_method = getattr(
+        result,
+        "entry_method",
+        None,
+    ) or "Clearly eligible under detector rules."
+
+    prop_firm = getattr(
+        result,
+        "prop_firm",
+        None,
+    ) or "Not clearly stated"
+
+    prize = getattr(
+        result,
+        "prize",
+        None,
+    ) or "Not clearly stated"
+
+    winners = getattr(
+        result,
+        "winners",
+        None,
+    ) or "Not stated"
+
+    message = (
+        "🎯 **ELIGIBLE PROP-FIRM GIVEAWAY**\n\n"
+        f"**Prop Firm:** {prop_firm}\n"
+        f"**Prize:** {prize}\n"
+        f"**Winners:** {winners}\n"
+        f"**Platform:** "
+        f"{post.get('platform', 'Unknown')}\n"
+        f"**Author:** "
+        f"{post.get('author', 'Unknown')}\n\n"
+        f"**Post:** "
+        f"{post.get('post_url', '')}\n\n"
+        f"**Entry:** {entry_method}"
+    )
+
+    try:
+
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json={
+                "content": message,
+            },
+            timeout=20,
+        )
+
+        if response.status_code in (
+            200,
+            204,
+        ):
+
+            print(
+                "Discord alert sent successfully: "
+                f"{post.get('post_url', '')}"
+            )
+
+            return True
+
+        print(
+            "Discord webhook failed: "
+            f"HTTP {response.status_code}"
+        )
+
+        print(
+            response.text[:1000]
+        )
+
+        return False
+
+    except Exception as error:
+
+        print(
+            f"Discord webhook error: {error}"
+        )
+
+        return False
+
+
+def process_posts(posts):
+
+    eligible_count = 0
+    uncertain_count = 0
+    rejected_count = 0
+    alerts_sent = 0
+
+    print(
+        f"Processing {len(posts)} posts..."
+    )
+
+    print("")
+    print(
+        "========== SAMPLE COLLECTED POSTS =========="
+    )
+
+    for sample in posts[:5]:
+
+        print(
+            "PLATFORM:",
+            sample.get(
+                "platform",
+                "",
+            ),
+        )
+
+        print(
+            "TITLE:",
+            sample.get(
+                "title",
+                "",
+            ),
+        )
+
+        print(
+            "TEXT:",
+            sample.get(
+                "text",
+                "",
+            )[:500],
+        )
+
+        print(
+            "DESCRIPTION:",
+            sample.get(
+                "description",
+                "",
+            )[:500],
+        )
+
+        print(
+            "URL:",
+            sample.get(
+                "post_url",
+                "",
+            ),
+        )
+
+        print(
+            "--------------------------------------------"
+        )
+
+    print(
+        "============================================"
+    )
+
+    print("")
+
+    for index, raw_post in enumerate(
+        posts,
+        start=1,
+    ):
+
+        post = normalize_post(
+            raw_post
+        )
+
+        text = build_post_text(
+            post
+        )
+
+        if not text.strip():
+
+            rejected_count += 1
+
+            continue
 
         try:
 
-            posts = run_actor(
-                platform,
-                search_queries,
-            )
-
-            all_posts.extend(
-                posts
+            result = evaluate_giveaway(
+                text
             )
 
         except Exception as error:
 
             print(
-                f"Apify error on {platform}: {error}"
+                f"Eligibility error on post "
+                f"{index}: {error}"
             )
 
+            continue
+
+        decision = getattr(
+            result,
+            "decision",
+            None,
+        )
+
+        decision_value = getattr(
+            decision,
+            "value",
+            str(decision),
+        )
+
+        print(
+            f"Post {index}: "
+            f"{decision_value} | "
+            f"{post.get('platform', 'unknown')} | "
+            f"{post.get('post_url', '')}"
+        )
+
+        if decision_value == "ELIGIBLE":
+
+            eligible_count += 1
+
+            if send_discord_alert(
+                post,
+                result,
+            ):
+
+                alerts_sent += 1
+
+        elif decision_value == "UNCERTAIN":
+
+            uncertain_count += 1
+
+        else:
+
+            rejected_count += 1
+
     print("")
+
     print(
-        f"Total individual results collected across platforms: "
-        f"{len(all_posts)}"
+        "========== DETECTOR SUMMARY =========="
     )
 
-    return all_posts
+    print(
+        f"Total posts:    {len(posts)}"
+    )
+
+    print(
+        f"Eligible:       {eligible_count}"
+    )
+
+    print(
+        f"Uncertain:      {uncertain_count}"
+    )
+
+    print(
+        f"Rejected:       {rejected_count}"
+    )
+
+    print(
+        f"Discord alerts: {alerts_sent}"
+    )
+
+    print(
+        "======================================="
+    )
+
+    return {
+        "total": len(posts),
+        "eligible": eligible_count,
+        "uncertain": uncertain_count,
+        "rejected": rejected_count,
+        "alerts_sent": alerts_sent,
+    }
+
+
+def main():
+
+    print(
+        "=============================================="
+    )
+
+    print(
+        "PROP-FIRM GIVEAWAY DETECTOR"
+    )
+
+    print(
+        "=============================================="
+    )
+
+    print("")
+
+    print(
+        "Detector starting..."
+    )
+
+    print(
+        f"Platforms configured: {PLATFORMS}"
+    )
+
+    print(
+        f"Search queries: {len(SEARCH_QUERIES)}"
+    )
+
+    if not APIFY_API_TOKEN:
+
+        print(
+            "ERROR: APIFY_API_TOKEN is not configured."
+        )
+
+        return
+
+    if not DISCORD_WEBHOOK_URL:
+
+        print(
+            "WARNING: DISCORD_WEBHOOK_URL "
+            "is not configured."
+        )
+
+    print("")
+
+    print(
+        "Starting Apify collection..."
+    )
+
+    try:
+
+        collected_posts = (
+            collect_from_apify()
+        )
+
+    except Exception as error:
+
+        print(
+            f"Apify collection failed: {error}"
+        )
+
+        return
+
+    if not collected_posts:
+
+        print(
+            "No posts were collected."
+        )
+
+        return
+
+    print("")
+
+    print(
+        f"Collected {len(collected_posts)} "
+        "individual results."
+    )
+
+    normalized_posts = [
+        normalize_post(post)
+        for post in collected_posts
+    ]
+
+    unique_posts = deduplicate_posts(
+        normalized_posts
+    )
+
+    print(
+        f"After deduplication: "
+        f"{len(unique_posts)} posts."
+    )
+
+    print("")
+
+    process_posts(
+        unique_posts
+    )
+
+    print("")
+
+    print(
+        "Detector run complete."
+    )
+
+
+if __name__ == "__main__":
+
+    main()
