@@ -54,7 +54,9 @@ SEARCH_QUERIES = [
 # internet/social content.
 
 PLATFORMS = [
-    "web",]
+    "web",
+"youtube”
+”reddit"]
 # ------------------------------------------------------------
 # Detector behavior
 # ------------------------------------------------------------
