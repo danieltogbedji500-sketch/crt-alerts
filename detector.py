@@ -193,6 +193,18 @@ def process_posts(posts):
     alerts_sent = 0
 
     print(f"Processing {len(posts)} posts...")
+    print("")
+print("========== SAMPLE COLLECTED POSTS ==========")
+
+for sample in posts[:5]:
+    print("PLATFORM:", sample.get("platform"))
+    print("TITLE:", sample.get("title"))
+    print("TEXT:", sample.get("text")[:500])
+    print("DESCRIPTION:", sample.get("description")[:500])
+    print("URL:", sample.get("post_url"))
+    print("--------------------------------------------")
+
+print("============================================")
 
     for index, raw_post in enumerate(posts, start=1):
 
