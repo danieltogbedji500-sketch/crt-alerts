@@ -8,6 +8,7 @@ import requests
 
 from eligibility import evaluate_giveaway
 from apify_collectors import collect_everything
+from config import PLATFORMS
 
 
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
@@ -139,10 +140,13 @@ def send_discord_alert(post, result):
     platform = post.get("platform", "Unknown")
     url = post.get("post_url", "")
 
-    prop_firm = result.prop_firm or "Not stated"
-    prize = result.prize or "Not stated"
-    winners = result.winners or "Not stated"
-    entry_method = result.entry_method or "Not clearly stated"
+    prop_firm = getattr(result, "prop_firm", None) or "Not stated"
+    prize = getattr(result, "prize", None) or "Not stated"
+    winners = getattr(result, "winners", None) or "Not stated"
+    entry_method = (
+        getattr(result, "entry_method", None)
+        or "Not clearly stated"
+    )
 
     message = (
         "🎯 **ELIGIBLE PROP-FIRM GIVEAWAY**\n\n"
@@ -246,7 +250,9 @@ def process_posts(posts, alerted_urls):
         )
 
         if not url:
-            print(f"[{index}] Skipping post without URL.")
+            print(
+                f"[{index}] Skipping post without URL."
+            )
             continue
 
         post["post_url"] = url
@@ -269,7 +275,21 @@ def process_posts(posts, alerted_urls):
 
         result = evaluate_giveaway(text)
 
-        if result.decision.value == "ELIGIBLE":
+        decision = getattr(result, "decision", None)
+
+        if decision is None:
+            print(
+                f"[{index}] Could not determine decision: {url}"
+            )
+            continue
+
+        decision_value = getattr(
+            decision,
+            "value",
+            str(decision)
+        )
+
+        if decision_value == "ELIGIBLE":
             eligible_count += 1
 
             print(
@@ -278,7 +298,7 @@ def process_posts(posts, alerted_urls):
 
             success = send_discord_alert(
                 post,
-                result,
+                result
             )
 
             if success:
@@ -290,7 +310,7 @@ def process_posts(posts, alerted_urls):
             else:
                 discord_failure_count += 1
 
-        elif result.decision.value == "UNCERTAIN":
+        elif decision_value == "UNCERTAIN":
             uncertain_count += 1
 
             print(
@@ -340,7 +360,8 @@ def main():
 
     try:
         posts = collect_everything(
-            APIFY_API_TOKEN
+            APIFY_API_TOKEN,
+            PLATFORMS
         )
 
     except Exception as e:
@@ -362,7 +383,7 @@ def main():
 
     process_posts(
         posts,
-        alerted_urls,
+        alerted_urls
     )
 
 
