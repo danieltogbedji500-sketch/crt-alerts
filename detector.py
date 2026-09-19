@@ -205,7 +205,6 @@ for sample in posts[:5]:
     print("--------------------------------------------")
 
 print("============================================")
-
     for index, raw_post in enumerate(posts, start=1):
 
         post = normalize_post(raw_post)
