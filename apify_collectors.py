@@ -1,13 +1,4 @@
-# ============================================================
-# PROP-FIRM GIVEAWAY DETECTOR
-# APIFY COLLECTORS
-# ============================================================
-
-import os
-from apify_client import ApifyClient
-
-
-APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
+import requests
 
 
 ACTORS = {
@@ -22,68 +13,36 @@ ACTORS = {
 }
 
 
-def build_input(platform, queries):
-
-    if platform == "web":
-        return {
-            "queries": "\n".join(queries),
-            "maxPagesPerQuery": 2,
-        }
-
-    if platform == "x":
-        return {
-            "searchTerms": queries,
-            "maxItems": 50,
-            "sort": "Latest",
-        }
-
-    if platform == "youtube":
-        return {
-            "searchQueries": queries,
-            "maxResultsPerQuery": 20,
-        }
-
-    if platform == "reddit":
-        return {
-            "searchQueries": queries,
-            "maxResultsPerQuery": 20,
-            "sort": "new",
-        }
-
-    if platform == "instagram":
-        return {
-            "search": " OR ".join(queries),
-            "searchType": "popular_reels",
-            "maxResults": 50,
-        }
-
-    if platform == "facebook":
-        return {
-            "searchQueries": queries,
-            "maxPosts": 50,
-            "postTimeRange": "7d",
-        }
-
-    if platform == "tiktok":
-        return {
-            "searchQueries": queries,
-            "maxItems": 50,
-        }
-
-    if platform == "linkedin":
-        return {
-            "searchQueries": queries,
-            "maxPosts": 50,
-            "postedLimit": "week",
-        }
-
-    return {}
+SEARCH_QUERIES = [
+    "prop firm giveaway",
+    "prop trading giveaway",
+    "funded account giveaway",
+    "funded trader giveaway",
+    "free funded account",
+    "free prop challenge",
+    "win funded account",
+    "win prop firm challenge",
+    "win a funded account",
+    "prop firm contest",
+    "prop trading contest",
+    "funded account contest",
+    "free trading challenge",
+    "100k funded account giveaway",
+    "50k funded account giveaway",
+    "200k funded account giveaway",
+    "new prop firm giveaway",
+    "prop firm launch giveaway",
+    "prop firm opening giveaway",
+    '"giveaway" "funded account"',
+    '"giveaway" "prop firm"',
+    '"win" "funded account"',
+    '"free challenge" "prop firm"',
+    '"winner" "funded account"',
+]
 
 
 def first_value(item, keys, default=""):
-
     for key in keys:
-
         value = item.get(key)
 
         if value is not None and value != "":
@@ -92,331 +51,359 @@ def first_value(item, keys, default=""):
     return default
 
 
-def normalize_item(item, platform):
-
-    if not isinstance(item, dict):
-
+def build_input(platform, query):
+    if platform == "web":
         return {
-            "platform": platform,
-            "post_url": "",
-            "author": "",
-            "published_at": "",
-            "text": str(item),
-            "title": "",
-            "description": "",
-            "media": "",
-            "transcript": "",
-            "engagement_data": {},
+            "queries": query,
+            "maxPagesPerQuery": 1,
+            "resultsPerPage": 20,
+            "languageCode": "en",
+            "countryCode": "us",
+        }
+
+    if platform == "x":
+        return {
+            "searchTerms": [query],
+            "maxItems": 20,
+        }
+
+    if platform == "youtube":
+        return {
+            "searchQueries": [query],
+            "maxResults": 20,
+        }
+
+    if platform == "reddit":
+        return {
+            "searches": [query],
+            "maxItems": 20,
+        }
+
+    if platform == "instagram":
+        return {
+            "search": query,
+            "resultsLimit": 20,
+        }
+
+    if platform == "facebook":
+        return {
+            "searchQueries": [query],
+            "maxItems": 20,
+        }
+
+    if platform == "tiktok":
+        return {
+            "searchQueries": [query],
+            "maxItems": 20,
+        }
+
+    if platform == "linkedin":
+        return {
+            "searchQueries": [query],
+            "maxResults": 20,
         }
 
     return {
-        "platform": platform,
-
-        "post_url": first_value(
-            item,
-            [
-                "url",
-                "postUrl",
-                "post_url",
-                "tweetUrl",
-                "webUrl",
-                "link",
-                "canonicalUrl",
-            ],
-        ),
-
-        "author": first_value(
-            item,
-            [
-                "author",
-                "authorName",
-                "username",
-                "userName",
-                "ownerUsername",
-                "channelName",
-            ],
-        ),
-
-        "published_at": first_value(
-            item,
-            [
-                "publishedAt",
-                "published_at",
-                "createdAt",
-                "created_at",
-                "date",
-                "timestamp",
-            ],
-        ),
-
-        "text": first_value(
-            item,
-            [
-                "text",
-                "fullText",
-                "content",
-                "caption",
-                "tweetText",
-                "snippet",
-            ],
-        ),
-
-        "title": first_value(
-            item,
-            [
-                "title",
-                "videoTitle",
-                "name",
-            ],
-        ),
-
-        "description": first_value(
-            item,
-            [
-                "description",
-                "desc",
-                "snippet",
-            ],
-        ),
-
-        "media": first_value(
-            item,
-            [
-                "videoUrl",
-                "imageUrl",
-                "mediaUrl",
-            ],
-        ),
-
-        "transcript": first_value(
-            item,
-            [
-                "transcript",
-                "transcription",
-            ],
-        ),
-
-        "engagement_data": {},
+        "query": query,
     }
 
 
-def run_actor(platform, queries):
+def normalize_item(item, platform):
+    if not isinstance(item, dict):
+        return None
 
-    if not APIFY_API_TOKEN:
-        raise RuntimeError(
-            "APIFY_API_TOKEN is not configured."
-        )
-
-    if platform not in ACTORS:
-
-        print(
-            f"No Actor configured for platform: {platform}"
-        )
-
-        return []
-
-    actor_id = ACTORS[platform]
-
-    actor_input = build_input(
-        platform,
-        queries,
+    url = first_value(
+        item,
+        [
+            "url",
+            "link",
+            "postUrl",
+            "postURL",
+            "webpageUrl",
+            "pageUrl",
+            "canonicalUrl",
+            "videoUrl",
+            "video_url",
+        ],
     )
 
+    title = first_value(
+        item,
+        [
+            "title",
+            "name",
+            "headline",
+            "videoTitle",
+        ],
+    )
+
+    text = first_value(
+        item,
+        [
+            "text",
+            "content",
+            "postText",
+            "caption",
+            "body",
+            "tweetText",
+            "description",
+        ],
+    )
+
+    description = first_value(
+        item,
+        [
+            "description",
+            "snippet",
+            "summary",
+        ],
+    )
+
+    author = first_value(
+        item,
+        [
+            "author",
+            "authorName",
+            "username",
+            "userName",
+            "channelName",
+            "ownerUsername",
+        ],
+    )
+
+    published_at = first_value(
+        item,
+        [
+            "publishedAt",
+            "publishDate",
+            "date",
+            "createdAt",
+            "timestamp",
+        ],
+    )
+
+    # Build useful searchable text.
+    combined_text = "\n".join(
+        str(value)
+        for value in [
+            title,
+            text,
+            description,
+        ]
+        if value
+    )
+
+    if not url and not combined_text:
+        return None
+
+    return {
+        "platform": platform,
+        "post_url": str(url or ""),
+        "author": str(author or ""),
+        "published_at": str(published_at or ""),
+        "text": str(combined_text),
+        "title": str(title or ""),
+        "description": str(description or ""),
+        "media": "",
+    }
+
+
+def run_actor(api_token, actor_id, actor_input, platform):
     print(
-        f"Starting Apify Actor: {actor_id}"
+        f"Running Apify actor: {actor_id} "
+        f"for platform: {platform}"
     )
 
-    client = ApifyClient(
-        APIFY_API_TOKEN
+    url = (
+        "https://api.apify.com/v2/acts/"
+        f"{actor_id.replace('/', '~')}/runs"
     )
 
-    run = client.actor(
-        actor_id
-    ).call(
-        run_input=actor_input
+    response = requests.post(
+        url,
+        params={
+            "token": api_token,
+        },
+        json=actor_input,
+        timeout=60,
     )
 
-    dataset_id = run.default_dataset_id
+    response.raise_for_status()
+
+    run = response.json().get("data", {})
+
+    run_id = run.get("id")
+    dataset_id = run.get("defaultDatasetId")
+
+    if not run_id:
+        raise RuntimeError(
+            f"Apify did not return a run ID for {actor_id}"
+        )
 
     if not dataset_id:
-
-        print(
-            f"No dataset returned for {platform}."
+        raise RuntimeError(
+            f"Apify did not return a dataset ID for {actor_id}"
         )
 
+    print(
+        f"Apify run started: {run_id}"
+    )
+
+    # Wait for the actor to finish.
+    status_url = (
+        f"https://api.apify.com/v2/actor-runs/"
+        f"{run_id}"
+    )
+
+    for attempt in range(60):
+        status_response = requests.get(
+            status_url,
+            params={
+                "token": api_token,
+            },
+            timeout=60,
+        )
+
+        status_response.raise_for_status()
+
+        status_data = status_response.json().get(
+            "data",
+            {}
+        )
+
+        status = status_data.get("status")
+
+        print(
+            f"Apify status: {status}"
+        )
+
+        if status in {
+            "SUCCEEDED",
+            "FAILED",
+            "ABORTED",
+            "TIMED-OUT",
+        }:
+            break
+
+        import time
+
+        time.sleep(2)
+
+    if status != "SUCCEEDED":
+        raise RuntimeError(
+            f"Apify actor {actor_id} ended with "
+            f"status: {status}"
+        )
+
+    dataset_url = (
+        f"https://api.apify.com/v2/datasets/"
+        f"{dataset_id}/items"
+    )
+
+    dataset_response = requests.get(
+        dataset_url,
+        params={
+            "token": api_token,
+            "clean": "true",
+        },
+        timeout=60,
+    )
+
+    dataset_response.raise_for_status()
+
+    items = dataset_response.json()
+
+    if not isinstance(items, list):
         return []
 
-    items = []
+    normalized = []
 
-    for item in client.dataset(
-        dataset_id
-    ).iterate_items():
+    for item in items:
 
-        # ----------------------------------------------------
-        # GOOGLE SEARCH SCRAPER
-        #
-        # The current Apify Google Search Scraper can return
-        # one search-page record containing:
-        #
-        # organicResults = [
-        #     {
-        #         title,
-        #         url,
-        #         description,
-        #         ...
-        #     }
-        # ]
-        #
-        # We must flatten those into individual posts.
-        # ----------------------------------------------------
-
-        if (
-            platform == "web"
-            and isinstance(
-                item.get("organicResults"),
-                list,
-            )
-        ):
+        # Google Search actor can return one object
+        # containing all organic results.
+        if platform == "web":
 
             organic_results = item.get(
-                "organicResults",
-                [],
-            )
-
-            query_info = item.get(
-                "searchQuery",
-                "",
+                "organicResults"
             )
 
             if isinstance(
-                query_info,
-                dict,
+                organic_results,
+                list
             ):
+                for result in organic_results:
 
-                query_info = (
-                    query_info.get("term")
-                    or query_info.get("query")
-                    or ""
-                )
+                    normalized_item = normalize_item(
+                        result,
+                        platform
+                    )
 
-            for result in organic_results:
+                    if normalized_item:
+                        normalized.append(
+                            normalized_item
+                        )
 
-                if not isinstance(
-                    result,
-                    dict,
-                ):
-                    continue
-
-                result_url = first_value(
-                    result,
-                    [
-                        "url",
-                        "link",
-                        "resultUrl",
-                    ],
-                )
-
-                # Never treat Google's own search page
-                # as a giveaway post.
-                if (
-                    not result_url
-                    or "google.com/search" in result_url.lower()
-                    or "google.com/url" in result_url.lower()
-                ):
-                    continue
-
-                result_copy = dict(result)
-
-                if query_info:
-                    result_copy["search_query"] = query_info
-
-                normalized = normalize_item(
-                    result_copy,
-                    platform,
-                )
-
-                items.append(
-                    normalized
-                )
-
-        else:
-
-            # ------------------------------------------------
-            # Other actors may already return one post per
-            # dataset item.
-            # ------------------------------------------------
-
-            normalized = normalize_item(
-                item,
-                platform,
-            )
-
-            result_url = normalized.get(
-                "post_url",
-                "",
-            )
-
-            if (
-                platform == "web"
-                and (
-                    not result_url
-                    or "google.com/search"
-                    in result_url.lower()
-                    or "google.com/url"
-                    in result_url.lower()
-                )
-            ):
                 continue
 
-            items.append(
-                normalized
+        normalized_item = normalize_item(
+            item,
+            platform
+        )
+
+        if normalized_item:
+            normalized.append(
+                normalized_item
             )
 
-    print(
-        f"{platform}: {len(items)} individual results collected."
-    )
-
-    return items
+    return normalized
 
 
-def collect_everything(
-    search_queries,
-    platforms,
-):
-
+def collect_everything(api_token, platforms):
     all_posts = []
 
     for platform in platforms:
 
-        print("")
-        print("--------------------------------------------")
-        print(
-            f"Collecting platform: {platform}"
-        )
-        print("--------------------------------------------")
+        actor_id = ACTORS.get(platform)
 
-        try:
-
-            posts = run_actor(
-                platform,
-                search_queries,
-            )
-
-            all_posts.extend(
-                posts
-            )
-
-        except Exception as error:
-
+        if not actor_id:
             print(
-                f"Apify error on {platform}: {error}"
+                f"No Apify actor configured for "
+                f"platform: {platform}"
+            )
+            continue
+
+        for query in SEARCH_QUERIES:
+
+            print()
+            print(
+                f"Searching {platform}: {query}"
             )
 
-    print("")
-    print(
-        f"Total individual results collected across platforms: "
-        f"{len(all_posts)}"
-    )
+            try:
+                actor_input = build_input(
+                    platform,
+                    query
+                )
+
+                results = run_actor(
+                    api_token,
+                    actor_id,
+                    actor_input,
+                    platform
+                )
+
+                print(
+                    f"Found {len(results)} results "
+                    f"for this search."
+                )
+
+                all_posts.extend(results)
+
+            except Exception as e:
+                print(
+                    f"ERROR for {platform} / "
+                    f"{query}: {e}"
+                )
 
     return all_posts
-    
