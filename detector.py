@@ -1,423 +1,370 @@
-# ============================================================
-# PROP-FIRM GIVEAWAY DETECTOR
-# APIFY COLLECTORS
-# ============================================================
-
-print("🚨 DETECTOR.PY STARTED")
-
 import os
-from apify_client import ApifyClient
+import json
+import hashlib
+import time
+from urllib.parse import urlsplit, urlunsplit
+
+import requests
+
+from eligibility import evaluate_giveaway
+from apify_collectors import collect_everything
 
 
 APIFY_API_TOKEN = os.getenv("APIFY_API_TOKEN")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+
+ALERT_STATE_FILE = "alerted_urls.json"
 
 
-ACTORS = {
-    "web": "apify/google-search-scraper",
-    "x": "apidojo/tweet-scraper",
-    "youtube": "apigeek/youtube-scraper",
-    "reddit": "scrapersdelight/reddit-search-scraper",
-    "instagram": "apify/instagram-search-scraper",
-    "facebook": "simpleapi/facebook-posts-search-scraper",
-    "tiktok": "logical_scrapers/tiktok-search-scraper",
-    "linkedin": "harvestapi/linkedin-post-search",
-}
+def canonicalize_url(url):
+    if not url:
+        return ""
+
+    try:
+        parts = urlsplit(url)
+
+        clean = urlunsplit(
+            (
+                parts.scheme,
+                parts.netloc,
+                parts.path.rstrip("/"),
+                "",
+                "",
+            )
+        )
+
+        return clean
+
+    except Exception:
+        return url.strip()
 
 
-def build_input(platform, queries):
+def load_alerted_urls():
+    if not os.path.exists(ALERT_STATE_FILE):
+        return set()
 
-    if platform == "web":
-        return {
-            "queries": "\n".join(queries),
-            "maxPagesPerQuery": 2,
-        }
+    try:
+        with open(ALERT_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
-    if platform == "x":
-        return {
-            "searchTerms": queries,
-            "maxItems": 50,
-            "sort": "Latest",
-        }
+        if isinstance(data, list):
+            return set(data)
 
-    if platform == "youtube":
-        return {
-            "searchQueries": queries,
-            "maxResultsPerQuery": 20,
-        }
+    except Exception as e:
+        print(f"Could not load alert memory: {e}")
 
-    if platform == "reddit":
-        return {
-            "searchQueries": queries,
-            "maxResultsPerQuery": 20,
-            "sort": "new",
-        }
-
-    if platform == "instagram":
-        return {
-            "search": " OR ".join(queries),
-            "searchType": "popular_reels",
-            "maxResults": 50,
-        }
-
-    if platform == "facebook":
-        return {
-            "searchQueries": queries,
-            "maxPosts": 50,
-            "postTimeRange": "7d",
-        }
-
-    if platform == "tiktok":
-        return {
-            "searchQueries": queries,
-            "maxItems": 50,
-        }
-
-    if platform == "linkedin":
-        return {
-            "searchQueries": queries,
-            "maxPosts": 50,
-            "postedLimit": "week",
-        }
-
-    return {}
+    return set()
 
 
-def first_value(item, keys, default=""):
+def save_alerted_urls(alerted_urls):
+    try:
+        with open(ALERT_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                sorted(alerted_urls),
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
 
-    for key in keys:
-
-        value = item.get(key)
-
-        if value is not None and value != "":
-            return value
-
-    return default
+    except Exception as e:
+        print(f"Could not save alert memory: {e}")
 
 
-def normalize_item(item, platform):
-
-    if not isinstance(item, dict):
-
-        return {
-            "platform": platform,
-            "post_url": "",
-            "author": "",
-            "published_at": "",
-            "text": str(item),
-            "title": "",
-            "description": "",
-            "media": "",
-            "transcript": "",
-            "engagement_data": {},
-        }
-
+def normalize_post(post):
     return {
-        "platform": platform,
-
-        "post_url": first_value(
-            item,
-            [
-                "url",
-                "postUrl",
-                "post_url",
-                "tweetUrl",
-                "webUrl",
-                "link",
-                "canonicalUrl",
-            ],
-        ),
-
-        "author": first_value(
-            item,
-            [
-                "author",
-                "authorName",
-                "username",
-                "userName",
-                "ownerUsername",
-                "channelName",
-            ],
-        ),
-
-        "published_at": first_value(
-            item,
-            [
-                "publishedAt",
-                "published_at",
-                "createdAt",
-                "created_at",
-                "date",
-                "timestamp",
-            ],
-        ),
-
-        "text": first_value(
-            item,
-            [
-                "text",
-                "fullText",
-                "content",
-                "caption",
-                "tweetText",
-                "snippet",
-            ],
-        ),
-
-        "title": first_value(
-            item,
-            [
-                "title",
-                "videoTitle",
-                "name",
-            ],
-        ),
-
-        "description": first_value(
-            item,
-            [
-                "description",
-                "desc",
-                "snippet",
-            ],
-        ),
-
-        "media": first_value(
-            item,
-            [
-                "videoUrl",
-                "imageUrl",
-                "mediaUrl",
-            ],
-        ),
-
-        "transcript": first_value(
-            item,
-            [
-                "transcript",
-                "transcription",
-            ],
-        ),
-
-        "engagement_data": {},
+        "platform": post.get("platform", ""),
+        "post_url": post.get("post_url", ""),
+        "author": post.get("author", ""),
+        "published_at": post.get("published_at", ""),
+        "text": post.get("text", ""),
+        "title": post.get("title", ""),
+        "description": post.get("description", ""),
+        "media": post.get("media", ""),
     }
 
 
-def run_actor(platform, queries):
-
-    if not APIFY_API_TOKEN:
-        raise RuntimeError(
-            "APIFY_API_TOKEN is not configured."
-        )
-
-    if platform not in ACTORS:
-
-        print(
-            f"No Actor configured for platform: {platform}"
-        )
-
-        return []
-
-    actor_id = ACTORS[platform]
-
-    actor_input = build_input(
-        platform,
-        queries,
+def make_fingerprint(post):
+    raw = " | ".join(
+        [
+            str(post.get("platform", "")),
+            str(post.get("post_url", "")),
+            str(post.get("author", "")),
+            str(post.get("published_at", "")),
+            str(post.get("text", "")),
+            str(post.get("title", "")),
+        ]
     )
 
-    print(
-        f"Starting Apify Actor: {actor_id}"
+    return hashlib.sha256(
+        raw.encode("utf-8", errors="ignore")
+    ).hexdigest()
+
+
+def deduplicate_posts(posts):
+    unique = []
+    seen = set()
+
+    for post in posts:
+        fingerprint = make_fingerprint(post)
+
+        if fingerprint in seen:
+            continue
+
+        seen.add(fingerprint)
+        unique.append(post)
+
+    return unique
+
+
+def build_post_text(post):
+    parts = [
+        post.get("title", ""),
+        post.get("text", ""),
+        post.get("description", ""),
+        post.get("media", ""),
+    ]
+
+    return "\n".join(
+        str(part)
+        for part in parts
+        if part
     )
 
-    client = ApifyClient(
-        APIFY_API_TOKEN
+
+def send_discord_alert(post, result):
+    if not DISCORD_WEBHOOK_URL:
+        print("DISCORD_WEBHOOK_URL is missing.")
+        return False
+
+    platform = post.get("platform", "Unknown")
+    url = post.get("post_url", "")
+
+    prop_firm = result.prop_firm or "Not stated"
+    prize = result.prize or "Not stated"
+    winners = result.winners or "Not stated"
+    entry_method = result.entry_method or "Not clearly stated"
+
+    message = (
+        "🎯 **ELIGIBLE PROP-FIRM GIVEAWAY**\n\n"
+        f"**Prop Firm:** {prop_firm}\n"
+        f"**Prize:** {prize}\n"
+        f"**Winners:** {winners}\n"
+        f"**Eligible Entry Method:** {entry_method}\n"
+        f"**Platform:** {platform}\n"
+        f"**Post:** {url}"
     )
 
-    run = client.actor(
-        actor_id
-    ).call(
-        run_input=actor_input
-    )
+    payload = {
+        "content": message
+    }
 
-    dataset_id = run.default_dataset_id
-
-    if not dataset_id:
-
-        print(
-            f"No dataset returned for {platform}."
-        )
-
-        return []
-
-    items = []
-
-    for item in client.dataset(
-        dataset_id
-    ).iterate_items():
-
-        # ----------------------------------------------------
-        # GOOGLE SEARCH SCRAPER
-        #
-        # The current Apify Google Search Scraper can return
-        # one search-page record containing:
-        #
-        # organicResults = [
-        #     {
-        #         title,
-        #         url,
-        #         description,
-        #         ...
-        #     }
-        # ]
-        #
-        # We must flatten those into individual posts.
-        # ----------------------------------------------------
-
-        if (
-            platform == "web"
-            and isinstance(
-                item.get("organicResults"),
-                list,
-            )
-        ):
-
-            organic_results = item.get(
-                "organicResults",
-                [],
+    for attempt in range(1, 6):
+        try:
+            response = requests.post(
+                DISCORD_WEBHOOK_URL,
+                json=payload,
+                timeout=30,
             )
 
-            query_info = item.get(
-                "searchQuery",
-                "",
-            )
+            if 200 <= response.status_code < 300:
+                print("Discord alert sent successfully.")
+                return True
 
-            if isinstance(
-                query_info,
-                dict,
-            ):
+            if response.status_code == 429:
+                retry_after = 1
 
-                query_info = (
-                    query_info.get("term")
-                    or query_info.get("query")
-                    or ""
+                try:
+                    data = response.json()
+                    retry_after = float(
+                        data.get("retry_after", 1)
+                    )
+                except Exception:
+                    pass
+
+                retry_after = min(retry_after, 60)
+
+                print(
+                    f"Discord rate limited (429). "
+                    f"Waiting {retry_after} seconds..."
                 )
 
-            for result in organic_results:
-
-                if not isinstance(
-                    result,
-                    dict,
-                ):
-                    continue
-
-                result_url = first_value(
-                    result,
-                    [
-                        "url",
-                        "link",
-                        "resultUrl",
-                    ],
-                )
-
-                # Never treat Google's own search page
-                # as a giveaway post.
-                if (
-                    not result_url
-                    or "google.com/search" in result_url.lower()
-                    or "google.com/url" in result_url.lower()
-                ):
-                    continue
-
-                result_copy = dict(result)
-
-                if query_info:
-                    result_copy["search_query"] = query_info
-
-                normalized = normalize_item(
-                    result_copy,
-                    platform,
-                )
-
-                items.append(
-                    normalized
-                )
-
-        else:
-
-            # ------------------------------------------------
-            # Other actors may already return one post per
-            # dataset item.
-            # ------------------------------------------------
-
-            normalized = normalize_item(
-                item,
-                platform,
-            )
-
-            result_url = normalized.get(
-                "post_url",
-                "",
-            )
-
-            if (
-                platform == "web"
-                and (
-                    not result_url
-                    or "google.com/search"
-                    in result_url.lower()
-                    or "google.com/url"
-                    in result_url.lower()
-                )
-            ):
+                time.sleep(retry_after)
                 continue
 
-            items.append(
-                normalized
-            )
+            if 500 <= response.status_code < 600:
+                wait_time = min(2 ** attempt, 30)
 
-    print(
-        f"{platform}: {len(items)} individual results collected."
-    )
+                print(
+                    f"Discord server error "
+                    f"({response.status_code}). "
+                    f"Retrying in {wait_time}s..."
+                )
 
-    return items
-
-
-def collect_everything(
-    search_queries,
-    platforms,
-):
-
-    all_posts = []
-
-    for platform in platforms:
-
-        print("")
-        print("--------------------------------------------")
-        print(
-            f"Collecting platform: {platform}"
-        )
-        print("--------------------------------------------")
-
-        try:
-
-            posts = run_actor(
-                platform,
-                search_queries,
-            )
-
-            all_posts.extend(
-                posts
-            )
-
-        except Exception as error:
+                time.sleep(wait_time)
+                continue
 
             print(
-                f"Apify error on {platform}: {error}"
+                f"Discord webhook failed: "
+                f"HTTP {response.status_code}"
             )
 
-    print("")
+            print(
+                f"Discord response: "
+                f"{response.text[:500]}"
+            )
+
+            return False
+
+        except requests.RequestException as e:
+            wait_time = min(2 ** attempt, 30)
+
+            print(
+                f"Discord request error "
+                f"(attempt {attempt}/5): {e}"
+            )
+
+            if attempt < 5:
+                time.sleep(wait_time)
+
+    print("Discord alert failed after 5 attempts.")
+    return False
+
+
+def process_posts(posts, alerted_urls):
+    eligible_count = 0
+    uncertain_count = 0
+    rejected_count = 0
+    already_alerted_count = 0
+    discord_alert_count = 0
+    discord_failure_count = 0
+
+    for index, raw_post in enumerate(posts, start=1):
+        post = normalize_post(raw_post)
+
+        url = canonicalize_url(
+            post.get("post_url", "")
+        )
+
+        if not url:
+            print(f"[{index}] Skipping post without URL.")
+            continue
+
+        post["post_url"] = url
+
+        if url in alerted_urls:
+            print(
+                f"[{index}] ALREADY ALERTED: {url}"
+            )
+
+            already_alerted_count += 1
+            continue
+
+        text = build_post_text(post).strip()
+
+        if not text:
+            print(
+                f"[{index}] Skipping empty post."
+            )
+            continue
+
+        result = evaluate_giveaway(text)
+
+        if result.decision.value == "ELIGIBLE":
+            eligible_count += 1
+
+            print(
+                f"[{index}] ELIGIBLE: {url}"
+            )
+
+            success = send_discord_alert(
+                post,
+                result,
+            )
+
+            if success:
+                discord_alert_count += 1
+
+                alerted_urls.add(url)
+                save_alerted_urls(alerted_urls)
+
+            else:
+                discord_failure_count += 1
+
+        elif result.decision.value == "UNCERTAIN":
+            uncertain_count += 1
+
+            print(
+                f"[{index}] UNCERTAIN: {url}"
+            )
+
+        else:
+            rejected_count += 1
+
+            print(
+                f"[{index}] REJECTED: {url}"
+            )
+
+    print()
+    print("========== DETECTOR SUMMARY ==========")
+    print(f"Total posts:       {len(posts)}")
+    print(f"Eligible:          {eligible_count}")
+    print(f"Uncertain:         {uncertain_count}")
+    print(f"Rejected:          {rejected_count}")
+    print(f"Already alerted:   {already_alerted_count}")
+    print(f"Discord alerts:    {discord_alert_count}")
+    print(f"Discord failures:  {discord_failure_count}")
+    print("=======================================")
+
+
+def main():
+    print("🚨 PROP-FIRM GIVEAWAY DETECTOR STARTED")
+
+    if not APIFY_API_TOKEN:
+        print("ERROR: APIFY_API_TOKEN is missing.")
+        return
+
+    if not DISCORD_WEBHOOK_URL:
+        print("ERROR: DISCORD_WEBHOOK_URL is missing.")
+        return
+
+    print("Loading previous alert memory...")
+
+    alerted_urls = load_alerted_urls()
+
     print(
-        f"Total individual results collected across platforms: "
-        f"{len(all_posts)}"
+        f"Previously alerted URLs: "
+        f"{len(alerted_urls)}"
     )
 
-    return all_posts
+    print("Collecting posts from Apify...")
+
+    try:
+        posts = collect_everything(
+            APIFY_API_TOKEN
+        )
+
+    except Exception as e:
+        print(
+            f"ERROR while collecting posts: {e}"
+        )
+        return
+
+    print(
+        f"Collected {len(posts)} raw posts."
+    )
+
+    posts = deduplicate_posts(posts)
+
+    print(
+        f"After deduplication: "
+        f"{len(posts)} posts."
+    )
+
+    process_posts(
+        posts,
+        alerted_urls,
+    )
+
+
+if __name__ == "__main__":
+    main()
