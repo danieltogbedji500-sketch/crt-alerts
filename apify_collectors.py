@@ -251,14 +251,12 @@ def run_actor(platform, queries):
     )
 
     run = client.actor(
-        actor_id
-    ).call(
-        run_input=actor_input
-    )
+    actor_id
+).call(
+    run_input=actor_input
+)
 
-    dataset_id = run.get(
-        "defaultDatasetId"
-    )
+dataset_id = run.default_dataset_id
 
     if not dataset_id:
         print(
