@@ -35,7 +35,7 @@ def normalize_post(post):
 
 
 # ------------------------------------------------------------
-# Create a fingerprint for deduplication
+# Create fingerprint
 # ------------------------------------------------------------
 
 def make_fingerprint(post):
@@ -54,11 +54,13 @@ def make_fingerprint(post):
             + post.get("title", "")
         )
 
-    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        source.encode("utf-8")
+    ).hexdigest()
 
 
 # ------------------------------------------------------------
-# Remove duplicate posts
+# Deduplicate posts
 # ------------------------------------------------------------
 
 def deduplicate_posts(posts):
@@ -78,7 +80,7 @@ def deduplicate_posts(posts):
 
 
 # ------------------------------------------------------------
-# Collect posts through Apify
+# Collect from Apify
 # ------------------------------------------------------------
 
 def collect_from_apify():
@@ -91,7 +93,7 @@ def collect_from_apify():
 
 
 # ------------------------------------------------------------
-# Build text used by the eligibility engine
+# Build text for eligibility engine
 # ------------------------------------------------------------
 
 def build_post_text(post):
@@ -114,6 +116,7 @@ def build_post_text(post):
 # ------------------------------------------------------------
 
 def send_discord_alert(post, result):
+
     if not DISCORD_WEBHOOK_URL:
         print("DISCORD_WEBHOOK_URL is not configured.")
         return False
@@ -121,25 +124,25 @@ def send_discord_alert(post, result):
     entry_method = getattr(
         result,
         "entry_method",
-        None
+        None,
     ) or "Clearly eligible under detector rules."
 
     prop_firm = getattr(
         result,
         "prop_firm",
-        None
+        None,
     ) or "Not clearly stated"
 
     prize = getattr(
         result,
         "prize",
-        None
+        None,
     ) or "Not clearly stated"
 
     winners = getattr(
         result,
         "winners",
-        None
+        None,
     ) or "Not stated"
 
     message = (
@@ -157,14 +160,14 @@ def send_discord_alert(post, result):
         response = requests.post(
             DISCORD_WEBHOOK_URL,
             json={
-                "content": message
+                "content": message,
             },
             timeout=20,
         )
 
         if response.status_code in (200, 204):
             print(
-                f"Discord alert sent successfully: "
+                "Discord alert sent successfully: "
                 f"{post.get('post_url', '')}"
             )
             return True
@@ -183,31 +186,68 @@ def send_discord_alert(post, result):
 
 
 # ------------------------------------------------------------
-# Process collected posts
+# Process posts
 # ------------------------------------------------------------
 
 def process_posts(posts):
+
     eligible_count = 0
     uncertain_count = 0
     rejected_count = 0
     alerts_sent = 0
 
     print(f"Processing {len(posts)} posts...")
+
+    # --------------------------------------------------------
+    # Show samples so we can verify what Apify collected
+    # --------------------------------------------------------
+
     print("")
-print("========== SAMPLE COLLECTED POSTS ==========")
+    print("========== SAMPLE COLLECTED POSTS ==========")
 
-for sample in posts[:5]:
-    print("PLATFORM:", sample.get("platform"))
-    print("TITLE:", sample.get("title"))
-    print("TEXT:", sample.get("text")[:500])
-    print("DESCRIPTION:", sample.get("description")[:500])
-    print("URL:", sample.get("post_url"))
-    print("--------------------------------------------")
+    for sample in posts[:5]:
 
-print("============================================")
-    for index, raw_post in enumerate(posts, start=1):
+        print(
+            "PLATFORM:",
+            sample.get("platform", ""),
+        )
+
+        print(
+            "TITLE:",
+            sample.get("title", ""),
+        )
+
+        print(
+            "TEXT:",
+            sample.get("text", "")[:500],
+        )
+
+        print(
+            "DESCRIPTION:",
+            sample.get("description", "")[:500],
+        )
+
+        print(
+            "URL:",
+            sample.get("post_url", ""),
+        )
+
+        print("--------------------------------------------")
+
+    print("============================================")
+    print("")
+
+    # --------------------------------------------------------
+    # Evaluate every post
+    # --------------------------------------------------------
+
+    for index, raw_post in enumerate(
+        posts,
+        start=1,
+    ):
 
         post = normalize_post(raw_post)
+
         text = build_post_text(post)
 
         if not text.strip():
@@ -216,18 +256,24 @@ print("============================================")
 
         try:
             result = evaluate_giveaway(text)
+
         except Exception as error:
             print(
-                f"Eligibility error on post {index}: {error}"
+                f"Eligibility error on post "
+                f"{index}: {error}"
             )
             continue
 
-        decision = getattr(result, "decision", None)
+        decision = getattr(
+            result,
+            "decision",
+            None,
+        )
 
         decision_value = getattr(
             decision,
             "value",
-            str(decision)
+            str(decision),
         )
 
         print(
@@ -241,7 +287,10 @@ print("============================================")
 
             eligible_count += 1
 
-            if send_discord_alert(post, result):
+            if send_discord_alert(
+                post,
+                result,
+            ):
                 alerts_sent += 1
 
         elif decision_value == "UNCERTAIN":
@@ -254,11 +303,11 @@ print("============================================")
 
     print("")
     print("========== DETECTOR SUMMARY ==========")
-    print(f"Total posts:       {len(posts)}")
-    print(f"Eligible:          {eligible_count}")
-    print(f"Uncertain:         {uncertain_count}")
-    print(f"Rejected:          {rejected_count}")
-    print(f"Discord alerts:    {alerts_sent}")
+    print(f"Total posts:    {len(posts)}")
+    print(f"Eligible:       {eligible_count}")
+    print(f"Uncertain:      {uncertain_count}")
+    print(f"Rejected:       {rejected_count}")
+    print(f"Discord alerts: {alerts_sent}")
     print("=======================================")
 
     return {
@@ -281,12 +330,15 @@ def main():
     print("==============================================")
 
     if not APIFY_API_TOKEN:
-        print("ERROR: APIFY_API_TOKEN is not configured.")
+        print(
+            "ERROR: APIFY_API_TOKEN is not configured."
+        )
         return
 
     if not DISCORD_WEBHOOK_URL:
         print(
-            "WARNING: DISCORD_WEBHOOK_URL is not configured."
+            "WARNING: DISCORD_WEBHOOK_URL "
+            "is not configured."
         )
 
     print("")
@@ -303,6 +355,7 @@ def main():
 
     try:
         collected_posts = collect_from_apify()
+
     except Exception as error:
         print(
             f"Apify collection failed: {error}"
@@ -314,7 +367,8 @@ def main():
         return
 
     print(
-        f"Collected {len(collected_posts)} raw posts."
+        f"Collected {len(collected_posts)} "
+        "raw posts."
     )
 
     normalized_posts = [
