@@ -22,10 +22,6 @@ ACTORS = {
 }
 
 
-# ------------------------------------------------------------
-# Build Actor input
-# ------------------------------------------------------------
-
 def build_input(platform, queries):
 
     if platform == "web":
@@ -84,14 +80,9 @@ def build_input(platform, queries):
     return {}
 
 
-# ------------------------------------------------------------
-# Safely get first available value
-# ------------------------------------------------------------
-
 def first_value(item, keys, default=""):
 
     for key in keys:
-
         value = item.get(key)
 
         if value is not None and value != "":
@@ -99,10 +90,6 @@ def first_value(item, keys, default=""):
 
     return default
 
-
-# ------------------------------------------------------------
-# Normalize Actor output
-# ------------------------------------------------------------
 
 def normalize_item(item, platform):
 
@@ -120,105 +107,86 @@ def normalize_item(item, platform):
             "engagement_data": {},
         }
 
-    url = first_value(
-        item,
-        [
-            "url",
-            "postUrl",
-            "post_url",
-            "tweetUrl",
-            "webUrl",
-            "link",
-            "canonicalUrl",
-        ],
-    )
-
-    author = first_value(
-        item,
-        [
-            "author",
-            "authorName",
-            "username",
-            "userName",
-            "ownerUsername",
-            "channelName",
-        ],
-    )
-
-    text = first_value(
-        item,
-        [
-            "text",
-            "fullText",
-            "content",
-            "caption",
-            "tweetText",
-        ],
-    )
-
-    title = first_value(
-        item,
-        [
-            "title",
-            "videoTitle",
-            "name",
-        ],
-    )
-
-    description = first_value(
-        item,
-        [
-            "description",
-            "desc",
-        ],
-    )
-
-    published_at = first_value(
-        item,
-        [
-            "publishedAt",
-            "published_at",
-            "createdAt",
-            "created_at",
-            "date",
-            "timestamp",
-        ],
-    )
-
-    transcript = first_value(
-        item,
-        [
-            "transcript",
-            "transcription",
-        ],
-    )
-
-    media = first_value(
-        item,
-        [
-            "videoUrl",
-            "imageUrl",
-            "mediaUrl",
-        ],
-    )
-
     return {
         "platform": platform,
-        "post_url": url,
-        "author": author,
-        "published_at": published_at,
-        "text": text,
-        "title": title,
-        "description": description,
-        "media": media,
-        "transcript": transcript,
+        "post_url": first_value(
+            item,
+            [
+                "url",
+                "postUrl",
+                "post_url",
+                "tweetUrl",
+                "webUrl",
+                "link",
+                "canonicalUrl",
+            ],
+        ),
+        "author": first_value(
+            item,
+            [
+                "author",
+                "authorName",
+                "username",
+                "userName",
+                "ownerUsername",
+                "channelName",
+            ],
+        ),
+        "published_at": first_value(
+            item,
+            [
+                "publishedAt",
+                "published_at",
+                "createdAt",
+                "created_at",
+                "date",
+                "timestamp",
+            ],
+        ),
+        "text": first_value(
+            item,
+            [
+                "text",
+                "fullText",
+                "content",
+                "caption",
+                "tweetText",
+                "snippet",
+            ],
+        ),
+        "title": first_value(
+            item,
+            [
+                "title",
+                "videoTitle",
+                "name",
+            ],
+        ),
+        "description": first_value(
+            item,
+            [
+                "description",
+                "desc",
+            ],
+        ),
+        "media": first_value(
+            item,
+            [
+                "videoUrl",
+                "imageUrl",
+                "mediaUrl",
+            ],
+        ),
+        "transcript": first_value(
+            item,
+            [
+                "transcript",
+                "transcription",
+            ],
+        ),
         "engagement_data": {},
     }
 
-
-# ------------------------------------------------------------
-# Run one Apify Actor
-# ------------------------------------------------------------
 
 def run_actor(platform, queries):
 
@@ -240,10 +208,8 @@ def run_actor(platform, queries):
         queries,
     )
 
-    print("")
     print(
-        f"Starting Apify Actor: "
-        f"{actor_id}"
+        f"Starting Apify Actor: {actor_id}"
     )
 
     client = ApifyClient(
@@ -251,12 +217,12 @@ def run_actor(platform, queries):
     )
 
     run = client.actor(
-    actor_id
-).call(
-    run_input=actor_input
-)
+        actor_id
+    ).call(
+        run_input=actor_input
+    )
 
-dataset_id = run.default_dataset_id
+    dataset_id = run.default_dataset_id
 
     if not dataset_id:
         print(
@@ -278,16 +244,11 @@ dataset_id = run.default_dataset_id
         )
 
     print(
-        f"{platform}: "
-        f"{len(items)} posts collected."
+        f"{platform}: {len(items)} posts collected."
     )
 
     return items
 
-
-# ------------------------------------------------------------
-# Collect everything
-# ------------------------------------------------------------
 
 def collect_everything(
     search_queries,
@@ -299,15 +260,11 @@ def collect_everything(
     for platform in platforms:
 
         print("")
-        print(
-            "--------------------------------------------"
-        )
+        print("--------------------------------------------")
         print(
             f"Collecting platform: {platform}"
         )
-        print(
-            "--------------------------------------------"
-        )
+        print("--------------------------------------------")
 
         try:
 
@@ -321,8 +278,7 @@ def collect_everything(
         except Exception as error:
 
             print(
-                f"Apify error on "
-                f"{platform}: {error}"
+                f"Apify error on {platform}: {error}"
             )
 
     print("")
